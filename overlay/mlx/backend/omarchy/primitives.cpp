@@ -8504,9 +8504,7 @@ void QuantizedMatmul::eval_gpu(const std::vector<array>& inputs, array& out) {
   // Short-pass GEMV (MLX_OMARCHY_QMV_SMALL_T, default off): the rows of a
   // batch-1 [1, T, K] x sit at the same strides as a [T, 1, K] decode batch,
   // so the pass runs as ceil(T / 4) batch-shared GEMV blocks. Each row keeps
-  // the single-row chain bit for bit (tests/omarchy/test_qmv_batch.cpp). On
-  // G13S the coopmat tile costs a flat ~0.75 ms per call at T = 2..32 against
-  // 0.14 ms for one row; the blocks win at T = 2..4 and tie at T = 8.
+  // the single-row chain bit for bit (tests/omarchy/test_qmv_batch.cpp).
   if (small_t_candidate && batch == 1u && transpose_ &&
       params.matrix_n <= omarchy::kMaxComputeGroupCountX * kGemvColumnsPerGroup) {
     const auto& caps = encoder.device().capabilities();
