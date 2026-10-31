@@ -8,11 +8,14 @@
 
 #include "mlx/event.h"
 
+#include <mutex>
+
 namespace mlx::core {
 
 struct FenceImpl {
   uint32_t count;
   Event event;
+  std::mutex mutex;
 
   FenceImpl(uint32_t count, Stream s) : count(count), event(s) {}
 };
@@ -21,15 +24,24 @@ Fence::Fence(Stream s) {
   fence_ = std::make_shared<FenceImpl>(0, s);
 }
 
-void Fence::wait(Stream s, const array&, uint32_t) {
-  // The events are timeline semaphores; waiting at the event's current
-  // value covers every update() this fence published before the wait was
-  // enqueued, which is a superset of the requested `value`.
-  cast<FenceImpl>().event.wait(s);
+void Fence::wait(Stream s, const array&, uint32_t value) {
+  if (value == 0) {
+    return;
+  }
+  auto& f = cast<FenceImpl>();
+  Event event;
+  {
+    std::lock_guard<std::mutex> lock(f.mutex);
+    // Event copies share the underlying event but have independent values.
+    event = f.event;
+  }
+  event.set_value(value);
+  event.wait(s);
 }
 
 uint32_t Fence::update(Stream s, const array&, bool) {
   auto& f = cast<FenceImpl>();
+  std::lock_guard<std::mutex> lock(f.mutex);
   if (std::getenv("MLX_OMARCHY_TRACE_DISPATCH") != nullptr) {
     fprintf(stderr, "[rtmod] FENCE-UPDATE count=%u st=%d\n", f.count, s.index);
   }
