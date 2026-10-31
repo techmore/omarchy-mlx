@@ -61,7 +61,7 @@ On the G16 kernel a GPU fault can stop the GPU until the next boot. Run nothing 
 
 ### TensorFold on Linux
 
-Install `tensorfold-vulkan` (techmore/omarchy-pkgs `elementaryos-mseries-mlx`; it depends on `vulkan-aurora`). Before the first model run on a new machine, run upstream's operator gates and kernel contract on the GPU, then the benchmark:
+Install `tensorfold-vulkan` (techmore/omarchy-pkgs `elementaryos-mseries-mlx`; it depends on `vulkan-aurora`). Before the first model run on a new machine, run upstream's operator gates and kernel contract on the GPU, then the benchmark. `omarchy-mlx-m4-bench` has the TensorFold leg once its package pins this script at or after the commit that added it; until then run `/usr/lib/omarchy-mlx/venv/bin/python scripts/m4_mini_bench.py` from a checkout with the same arguments.
 
 ```bash
 tensorfold-vulkan-gates
