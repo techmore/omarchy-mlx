@@ -6,6 +6,7 @@
 #include <vulkan/vulkan.h>
 
 #include <array>
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -15,6 +16,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -220,6 +222,9 @@ class CompletionDispatcher {
  public:
   explicit CompletionDispatcher(VkDevice device, Device* owner = nullptr);
   ~CompletionDispatcher();
+  // Stop the host worker without releasing pending resources or running
+  // handlers. The dispatcher itself must remain alive after this call.
+  void stop_without_draining();
 
   CompletionDispatcher(const CompletionDispatcher&) = delete;
   CompletionDispatcher& operator=(const CompletionDispatcher&) = delete;
@@ -233,6 +238,7 @@ class CompletionDispatcher {
     std::vector<std::shared_ptr<void>> temporaries;
     std::vector<std::function<void()>> handlers;
     VkEvent started;
+    bool published;
   };
 
   uint64_t reserve();
@@ -243,18 +249,18 @@ class CompletionDispatcher {
       uint64_t value,
       std::vector<std::shared_ptr<void>> temporaries,
       std::vector<std::function<void()>> handlers,
-      VkEvent started = VK_NULL_HANDLE);
+      VkEvent started = VK_NULL_HANDLE,
+      bool published = true);
+  // Publish a pre-enqueued completion after QueueSubmit returns successfully.
+  // This only flips an existing flag and never allocates.
+  void publish(uint64_t value);
   void wait(uint64_t value);
   uint64_t drained_value();
   void reset_progress_event(VkEvent event);
   bool has_active_submission(uint64_t through_value);
   void shutdown();
 
-  // Everything a submission put on the queue, retained so the watchdog's
-  // recovery ladder can resubmit it when Honeykrisp drops the batch (the
-  // completion timeline never advances and the batch never started
-  // executing). Retained under the dispatcher mutex, erased when the
-  // completion drains.
+  // Legacy replay metadata. The current watchdog does not resubmit work.
   struct ResubmitBatch {
     uint64_t value{0};
     VkCommandBuffer cmd{VK_NULL_HANDLE};
@@ -278,6 +284,11 @@ class CompletionDispatcher {
   // executing (all attached fences signalled). The only sound safe-to-
   // recycle test; the timeline observation is not.
   bool execution_complete(uint64_t value);
+  // A timeline signal alone does not prove that a command buffer is retired.
+  // Wait only up to |budget| for the corresponding execution fence(s).
+  bool wait_execution_retired(
+      uint64_t value,
+      std::chrono::steady_clock::duration budget);
   VkFence acquire_execution_fence();
   // Retire front execution fences whose fence has signalled, advancing
   // the done-through watermark; true when a release_quarantine pass is
@@ -378,18 +389,29 @@ class Device {
     return queue_mutex_;
   }
 
-  // Dropped-submission recovery ladder, invoked by the watchdog when a
-  // waited completion value stops advancing. Honeykrisp provably swallows
-  // submissions (the in-tree empty signal-only QueueSubmit fix documents
-  // the deterministic shape; burst observations add real command buffers
-  // whose started event never fires). The ladder resubmits every retained
-  // batch through |target_value| - legal because the single queue is
-  // in-order, so no later completion can have signaled while an earlier
-  // one is still stalled, and the started event proves the batch never
-  // began executing.
+  // A failed QueueSubmit may have reached the driver. Do not publish later
+  // completion values or reuse command buffers after this state is set.
+  void mark_submit_uncertain() noexcept {
+    submit_uncertain_.store(true, std::memory_order_release);
+  }
+  bool submit_uncertain() const noexcept {
+    return submit_uncertain_.load(std::memory_order_acquire);
+  }
+  // Stop host workers while keeping this device and its Vulkan objects alive.
+  // Only for process-lifetime containment of an uncertain submission.
+  void abandon_uncertain();
+  void ensure_submit_safe() const {
+    if (submit_uncertain()) {
+      throw std::runtime_error(
+          "[omarchy] Vulkan queue submission failed with unknown retirement; "
+          "refusing further GPU work.");
+    }
+  }
+
+  // A stalled completion does not prove that the driver discarded the
+  // submission. The watchdog refuses replay and reports the stall.
   enum class RecoveryResult : int {
-    // Ladder ran (rung 1 resubmit or rung 2 host-signal); the wait
-    // should restart its no-progress clock and keep waiting.
+    // Reserved for a recovery mechanism that can prove retirement.
     kRecovered = 1,
     // Nothing to recover right now: no retained batch exists at or
     // below last_reserved (another waiter's recovery already took the
@@ -422,6 +444,7 @@ class Device {
   VkDevice device_{VK_NULL_HANDLE};
   VkQueue queue_{VK_NULL_HANDLE};
   std::mutex queue_mutex_;
+  std::atomic<bool> submit_uncertain_{false};
   std::unique_ptr<ComputeRuntime> compute_;
   std::unique_ptr<CompletionDispatcher> completions_;
 };

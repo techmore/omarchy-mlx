@@ -300,6 +300,7 @@ void CommandEncoder::join_last_completion(const char* reason) {
 }
 
 void CommandEncoder::ensure_recording() {
+  device_.ensure_submit_safe();
   if (recording_) {
     return;
   }
@@ -315,7 +316,9 @@ void CommandEncoder::ensure_recording() {
   int oldest = -1;
   for (int i = 0; i < kInFlightCommandBuffers; ++i) {
     uint64_t value = slots_[i].in_flight;
-    if (value == 0 || completions.drained_value() >= value) {
+    if (value == 0 ||
+        (completions.drained_value() >= value &&
+         completions.execution_complete(value))) {
       slots_[i].in_flight = 0;
       chosen = i;
       break;
@@ -327,6 +330,12 @@ void CommandEncoder::ensure_recording() {
   }
   if (chosen < 0) {
     completions.wait(oldest_value);
+    if (!completions.wait_execution_retired(
+            oldest_value, std::chrono::nanoseconds(submit_hang_no_progress_ns()))) {
+      throw std::runtime_error(
+          "[omarchy] Vulkan command buffer execution fence did not retire "
+          "before the watchdog deadline (Timeout); refusing command buffer reuse.");
+    }
     slots_[oldest].in_flight = 0;
     chosen = oldest;
   }
@@ -1114,6 +1123,7 @@ void CommandEncoder::wait_outstanding_submissions() {
 }
 
 void CommandEncoder::submit() {
+  device_.ensure_submit_safe();
   auto& dt = vk::device_table();
   if (std::getenv("MLX_OMARCHY_TRACE_DISPATCH")) {
     fprintf(stderr, "[rtmod] SUBMIT-ENTER tid=%lu\n", (unsigned long)syscall(SYS_gettid));
@@ -1216,6 +1226,8 @@ void CommandEncoder::submit() {
     // QueueSubmit and the dispatcher enqueue. It is never held across a
     // host wait.
     std::lock_guard<std::mutex> lk(device_.queue_mutex());
+    // Another stream may have failed while this one waited for the lock.
+    device_.ensure_submit_safe();
     // Khronos guidance: HOST_VISIBLE memory without HOST_COHERENT needs an
     // explicit flush before submission.
     omarchy::allocator().flush_noncoherent(device_.handle());
@@ -1240,7 +1252,20 @@ void CommandEncoder::submit() {
     si.pSignalSemaphores = signal_sems.data();
     // Declared outside the try so the catch can detach it.
     VkFence submit_fence = VK_NULL_HANDLE;
+    bool submit_attempted = false;
+    bool completion_prepared = false;
     try {
+      // Allocate ownership before entering the driver. The dispatcher cannot
+      // drain this entry until publish() flips its nonallocating flag.
+      device_.completions().enqueue(
+          completion_value, std::move(keepalive), std::move(completed_handlers_),
+          was_recording ? slots_[current_slot_].started : VK_NULL_HANDLE,
+          false);
+      completion_prepared = true;
+      if (was_recording) {
+        slots_[current_slot_].in_flight = completion_value;
+      }
+      last_completion_ = completion_value;
       queue_t0 = prof::get().profiling() ? prof::host_ns() : 0;
       // Deterministic swallow simulation for the recovery ladder, in the
       // two field-observed classes:
@@ -1248,19 +1273,19 @@ void CommandEncoder::submit() {
       // MLX_OMARCHY_TEST_DROP_SUBMIT drops the Nth (1-based) QueueSubmit
       // entirely, the way Honeykrisp drops submissions in burst windows:
       // the batch never begins, so its started event never sets and
-      // recovery rung 1 (kick + resubmit at fresh values) must fire.
+      // the watchdog must report the stall without replaying the batch.
       //
       // MLX_OMARCHY_TEST_DROP_SIGNAL submits the Nth batch but strips
       // every timeline signal from it (ride-along user events AND the
       // device completion): the kernels execute and the started event
-      // sets, but no signal ever publishes - the executed-but-unsignaled
-      // class - so recovery rung 2 (host vkSignalSemaphore) must fire.
+      // sets, but no timeline signal publishes. The execution fence can
+      // still report completion; the watchdog must not manufacture one.
       //
       // Both share one submit sequence; the host still publishes the
       // completion entry, so the watchdog waits on a signal the GPU will
       // never (submit-drop) / did not (signal-strip) deliver. Comma-
       // separated 1-based ordinals: "1" hits the first submit, "1,2" the
-      // first two (consecutive-swallow recovery proof).
+      // first two.
       static std::atomic<uint64_t> submit_sequence{0};
       uint64_t ordinal = submit_sequence.fetch_add(1) + 1;
       auto env_hits_ordinal = [ordinal](const char* name) {
@@ -1300,17 +1325,46 @@ void CommandEncoder::submit() {
       if (simulate_drop) {
         fprintf(stderr, "[rtmod] TEST-DROP tid=%lu cv=%lu\n",
                 (unsigned long)syscall(SYS_gettid), (unsigned long)completion_value);
-      } else if (simulate_strip) {
-        fprintf(stderr, "[rtmod] TEST-STRIP tid=%lu cv=%lu\n",
-                (unsigned long)syscall(SYS_gettid), (unsigned long)completion_value);
       } else {
+        if (simulate_strip) {
+          fprintf(stderr, "[rtmod] TEST-STRIP tid=%lu cv=%lu\n",
+                  (unsigned long)syscall(SYS_gettid), (unsigned long)completion_value);
+        }
+        submit_attempted = true;
         VKX_CHECK(dt.QueueSubmit(device_.queue(), 1, &si, submit_fence));
       }
       queue_t1 = prof::get().profiling() ? prof::host_ns() : 0;
+      // This is the only post-submit publication step. If it fails, the
+      // entry remains unpublished and its resources stay owned.
+      device_.completions().publish(completion_value);
+      submitted = completion_value;
     } catch (...) {
+      if (submit_attempted) {
+        // Failure does not prove that the driver rejected every command.
+        // Keep the fence attached, prevent later timeline signals and slot
+        // reuse, and retain ownership without running completion handlers.
+        device_.mark_submit_uncertain();
+        // The unpublished dispatcher entry owns the payload and remains
+        // attached to the retained device for process-lifetime containment.
+        recording_ = false;
+        pending_.clear();
+        wait_semaphores_.clear();
+        signal_semaphores_.clear();
+        reset_dependency_tracking();
+        throw;
+      }
+      if (completion_prepared) {
+        device_.mark_submit_uncertain();
+        recording_ = false;
+        pending_.clear();
+        wait_semaphores_.clear();
+        signal_semaphores_.clear();
+        reset_dependency_tracking();
+        throw;
+      }
       device_.completions().detach_execution_fence(
           completion_value, submit_fence);
-      // The submission never reached the driver: the ended command buffer
+      // Failure happened before QueueSubmit: the ended command buffer
       // and the pending semaphore lists are dead (their keepalives have
       // already moved into the local payload and die with this frame).
       // Reset the encoder so it can be reused or destroyed cleanly; the
@@ -1333,32 +1387,6 @@ void CommandEncoder::submit() {
       // always have a completion entry).
       device_.completions().enqueue(completion_value, {}, {});
       throw;
-    }
-    // Publish only after the submit: the dispatcher must never wait on a
-    // value whose submission has not been handed to the driver.
-    // Retain everything the batch put on the queue so the watchdog's
-    // recovery ladder can resubmit it if Honeykrisp drops the submission
-    // (erased when the completion drains).
-    {
-      CompletionDispatcher::ResubmitBatch batch;
-      batch.value = completion_value;
-      batch.cmd = recording_ ? cmd_ : VK_NULL_HANDLE;
-      batch.wait_sems = wait_sems;
-      batch.wait_values = wait_values;
-      batch.signal_sems = signal_sems;
-      batch.signal_values = signal_values;
-      device_.completions().retain_for_resubmit(
-          completion_value, std::move(batch));
-    }
-    device_.completions().enqueue(
-        completion_value,
-        std::move(keepalive),
-        std::move(completed_handlers_),
-        was_recording ? slots_[current_slot_].started : VK_NULL_HANDLE);
-    last_completion_ = completion_value;
-    submitted = completion_value;
-    if (was_recording) {
-      slots_[current_slot_].in_flight = completion_value;
     }
     trace::counters().vk_submissions++;
     if (std::getenv("MLX_OMARCHY_TRACE_DISPATCH")) {
