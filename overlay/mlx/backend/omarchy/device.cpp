@@ -1399,120 +1399,15 @@ uint64_t Device::signal_timeline(VkSemaphore semaphore, uint64_t value) {
 Device::RecoveryResult Device::recover_stalled_submissions(
     uint64_t target_value,
     uint32_t round) {
-  // Budget: two recovery rounds per stalled wait (|round| is owned by the
-  // waiting loop, so a later wait starts fresh). Recovery is for the
-  // swallow class, not for a genuinely wedged GPU - a real hang must
-  // still surface as the typed watchdog error, not as an unbounded
-  // retry loop.
-  if (round >= 2) {
-    return RecoveryResult::kExhausted;
-  }
-
-  std::lock_guard<std::mutex> lk(queue_mutex_);
-  auto& completions = this->completions();
-  // Judge and take against ALL reserved values, not just the waited one:
-  // a previous recovery round re-retains resubmitted batches at fresh
-  // values above the original target, and they must not be stranded.
-  const uint64_t reserved_through = completions.last_reserved();
-  bool executing = completions.has_active_submission(reserved_through);
-  if (std::getenv("MLX_OMARCHY_TRACE_DISPATCH") != nullptr) {
-    fprintf(stderr,
-            "[rtmod] RECOVER-ENTER tid=%lu target=%llu through=%llu active=%d\n",
-            (unsigned long)syscall(SYS_gettid),
-            (unsigned long long)target_value,
-            (unsigned long long)reserved_through,
-            executing ? 1 : 0);
-  }
-
-  // A started event is recorded at TOP_OF_PIPE: it proves only that the
-  // submission began, not that its shaders finished or their writes are
-  // visible. Do not host-signal its completion or release retained batches.
-  // Leave them owned by the dispatcher and surface the existing watchdog
-  // error. Safe teardown of the device still requires driver cooperation.
-  if (executing) {
-    return RecoveryResult::kExhausted;
-  }
-
-  // No execution evidence: the batch never began. Resubmit it with
-  // fresh signal values - the dropped submission still holds its
-  // original timeline points inside Mesa, and re-signaling the same
-  // value creates a duplicate point Mesa does not publish. Timeline
-  // waits are >=, so strictly higher values satisfy every existing
-  // waiter.
-  std::vector<CompletionDispatcher::ResubmitBatch> batches =
-      completions.take_resubmit_batches(reserved_through);
-  if (batches.empty()) {
-    if (std::getenv("MLX_OMARCHY_TRACE_DISPATCH") != nullptr) {
-      fprintf(stderr, "[rtmod] RECOVER-FALSE tid=%lu empty-batches\n", (unsigned long)syscall(SYS_gettid));
-    }
-    // Another waiter's recovery already took the batches (or the
-    // producing stream has not submitted yet): not ours to recover, and
-    // not a hang verdict. The caller keeps waiting.
-    return RecoveryResult::kNotRecoverable;
-  }
-
-  auto& dt = vk::device_table();
-  // First, an empty queue-touch submit: if the loss was a missed
-  // doorbell rather than a dropped batch, this alone flushes the queue
-  // and the original submission completes. No semaphores, no command
-  // buffer - nothing to signal, so ordering cannot be violated.
-  VkSubmitInfo kick{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-  dt.QueueSubmit(queue_, 1, &kick, VK_NULL_HANDLE);
-
-  size_t count = batches.size();
-  for (auto& batch : batches) {
-    for (size_t i = 0; i + 1 < batch.signal_values.size(); ++i) {
-      uint64_t current = 0;
-      if (vk::device_table().GetSemaphoreCounterValue(
-              device_, batch.signal_sems[i], &current) != VK_SUCCESS) {
-        current = 0;
-      }
-      batch.signal_values[i] =
-          std::max(batch.signal_values[i], current) + 1;
-    }
-    uint64_t fresh_completion = completions.reserve();
-    batch.value = fresh_completion;
-    batch.signal_values.back() = fresh_completion;
-
-    VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-    VkTimelineSemaphoreSubmitInfo timeline{
-        VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO};
-    std::vector<VkPipelineStageFlags> wait_stages(
-        batch.wait_sems.size(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
-    timeline.waitSemaphoreValueCount =
-        static_cast<uint32_t>(batch.wait_values.size());
-    timeline.pWaitSemaphoreValues = batch.wait_values.data();
-    timeline.signalSemaphoreValueCount =
-        static_cast<uint32_t>(batch.signal_values.size());
-    timeline.pSignalSemaphoreValues = batch.signal_values.data();
-    si.pNext = &timeline;
-    si.waitSemaphoreCount = static_cast<uint32_t>(batch.wait_sems.size());
-    si.pWaitSemaphores = batch.wait_sems.data();
-    si.pWaitDstStageMask = wait_stages.data();
-    si.commandBufferCount = batch.cmd != VK_NULL_HANDLE ? 1u : 0u;
-    si.pCommandBuffers = batch.cmd != VK_NULL_HANDLE ? &batch.cmd : nullptr;
-    si.signalSemaphoreCount =
-        static_cast<uint32_t>(batch.signal_sems.size());
-    si.pSignalSemaphores = batch.signal_sems.data();
-    VKX_CHECK(dt.QueueSubmit(queue_, 1, &si, VK_NULL_HANDLE));
-    // The batch is pending again at its fresh value; retain it for a
-    // further round.
-    completions.retain_for_resubmit(fresh_completion, std::move(batch));
-    // Every reserved value needs a pending completion entry: join paths
-    // wait drained_value_ >= counter, and the fresh value's drain is what
-    // lets drained_value_ catch up past the original completion. Empty
-    // payload - the original completion still owns handlers/temporaries.
-    completions.enqueue(fresh_completion, {}, {});
-  }
-  fprintf(
-      stderr,
-      "[rtmod] SUBMIT-RECOVER tid=%lu resubmitted %zu stalled batch(es) through "
-      "cv>=%llu (round %u, fresh signals)\n",
-      (unsigned long)syscall(SYS_gettid),
-      count,
-      (unsigned long long)target_value,
-      round + 1);
-  return RecoveryResult::kRecovered;
+  (void)target_value;
+  (void)round;
+  // A missing TOP_OF_PIPE signal cannot establish that the queue discarded
+  // a submission: it may still be pending or its signal may be delayed.
+  // Replaying the same ONE_TIME_SUBMIT command buffer can therefore race
+  // the original execution and publish results prematurely. Keep the
+  // retained resources owned by the dispatcher and let the watchdog report
+  // the stall until the driver can prove cancellation or retirement.
+  return RecoveryResult::kExhausted;
 }
 
 void Device::join_completed_handlers() {
@@ -1722,13 +1617,9 @@ void wait_for_timeline_progress(
         last_advance = clock::now();
         continue;
       }
-      // No progress for a full no-progress interval. Before declaring the
-      // device hung, give the recovery ladder a chance: Honeykrisp
-      // provably swallows submissions (the empty signal-only shape was
-      // deterministic and is fixed; burst observations add real command
-      // buffers whose started event never fires). A successful resubmit
-      // restarts the no-progress clock; a refused or exhausted recovery
-      // throws exactly as before.
+      // No progress for a full no-progress interval. The recovery callback
+      // currently refuses replay because absence of a start signal does not
+      // establish that the original submission cannot still execute.
       if (std::getenv("MLX_OMARCHY_TRACE_DISPATCH") != nullptr) {
         fprintf(stderr,
                 "[rtmod] STALL tid=%lu target=%llu observed=%llu round=%u "
