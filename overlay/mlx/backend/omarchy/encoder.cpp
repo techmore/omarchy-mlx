@@ -1253,8 +1253,8 @@ void CommandEncoder::submit() {
       // MLX_OMARCHY_TEST_DROP_SIGNAL submits the Nth batch but strips
       // every timeline signal from it (ride-along user events AND the
       // device completion): the kernels execute and the started event
-      // sets, but no signal ever publishes - the executed-but-unsignaled
-      // class - so recovery rung 2 (host vkSignalSemaphore) must fire.
+      // sets, but no timeline signal publishes. The execution fence can
+      // still report completion; the watchdog must not manufacture one.
       //
       // Both share one submit sequence; the host still publishes the
       // completion entry, so the watchdog waits on a signal the GPU will
@@ -1300,10 +1300,11 @@ void CommandEncoder::submit() {
       if (simulate_drop) {
         fprintf(stderr, "[rtmod] TEST-DROP tid=%lu cv=%lu\n",
                 (unsigned long)syscall(SYS_gettid), (unsigned long)completion_value);
-      } else if (simulate_strip) {
-        fprintf(stderr, "[rtmod] TEST-STRIP tid=%lu cv=%lu\n",
-                (unsigned long)syscall(SYS_gettid), (unsigned long)completion_value);
       } else {
+        if (simulate_strip) {
+          fprintf(stderr, "[rtmod] TEST-STRIP tid=%lu cv=%lu\n",
+                  (unsigned long)syscall(SYS_gettid), (unsigned long)completion_value);
+        }
         VKX_CHECK(dt.QueueSubmit(device_.queue(), 1, &si, submit_fence));
       }
       queue_t1 = prof::get().profiling() ? prof::host_ns() : 0;
