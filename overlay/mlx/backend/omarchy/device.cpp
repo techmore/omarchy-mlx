@@ -1379,14 +1379,9 @@ Device::~Device() {
 
 uint64_t Device::signal_timeline(VkSemaphore semaphore, uint64_t value) {
   std::lock_guard<std::mutex> lk(queue_mutex_);
-  uint64_t completion_value = completions().reserve();
-  // Host-signal both timelines. This used to be an empty signal-only
-  // QueueSubmit (no command buffer, no waits); Honeykrisp swallows that
-  // shape - the semaphores are never signaled and the reserved
-  // completion value never publishes, so the next host wait deadlocks
-  // at target=1 with the counter stuck at 0 (cos/sin, GDN chunked
-  // async_eval, Ministral/Bonsai-8B first submissions). vkSignalSemaphore
-  // from the host needs no queue involvement and cannot be dropped.
+  // A CPU-produced event has no GPU submission of its own. Advancing the
+  // shared GPU completion timeline here would retire older, still-pending
+  // submissions and expose their output before execution completes.
   static PFN_vkSignalSemaphore signal_fn = nullptr;
   if (!signal_fn) {
     signal_fn = reinterpret_cast<PFN_vkSignalSemaphore>(
@@ -1397,12 +1392,8 @@ uint64_t Device::signal_timeline(VkSemaphore semaphore, uint64_t value) {
   ev.semaphore = semaphore;
   ev.value = value;
   VKX_CHECK(signal_fn(handle(), &ev));
-  VkSemaphoreSignalInfo cc{VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO};
-  cc.semaphore = completions().semaphore();
-  cc.value = completion_value;
-  VKX_CHECK(signal_fn(handle(), &cc));
-  completions().enqueue(completion_value, {}, {});
-  return completion_value;
+  // Zero denotes that this event signal has no associated GPU generation.
+  return 0;
 }
 
 Device::RecoveryResult Device::recover_stalled_submissions(
