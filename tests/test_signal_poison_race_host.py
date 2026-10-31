@@ -15,7 +15,7 @@ class SignalPoisonRaceTest(unittest.TestCase):
         method = source[start:end]
         header = (ROOT / 'overlay/mlx/backend/omarchy/device.h').read_text()
         start = header.index('  void mark_submit_uncertain() noexcept {')
-        end = header.index('\n\n  // Dropped-submission', start)
+        end = header.index('\n\n  // A stalled completion', start)
         guards = header[start:end]
         harness = r'''#include <atomic>
 #include <cstdint>

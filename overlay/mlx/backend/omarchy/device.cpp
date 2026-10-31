@@ -1842,11 +1842,24 @@ void CompletionDispatcher::enqueue(
     uint64_t value,
     std::vector<std::shared_ptr<void>> temporaries,
     std::vector<std::function<void()>> handlers,
-    VkEvent started) {
+    VkEvent started,
+    bool published) {
   std::lock_guard<std::mutex> lk(mutex_);
   pending_.push_back(Completion{
-      value, std::move(temporaries), std::move(handlers), started});
+      value, std::move(temporaries), std::move(handlers), started, published});
   cv_.notify_all();
+}
+
+void CompletionDispatcher::publish(uint64_t value) {
+  std::lock_guard<std::mutex> lk(mutex_);
+  for (auto it = pending_.rbegin(); it != pending_.rend(); ++it) {
+    if (it->value == value) {
+      it->published = true;
+      cv_.notify_all();
+      return;
+    }
+  }
+  throw std::logic_error("[omarchy] missing pre-enqueued completion");
 }
 
 void CompletionDispatcher::reset_progress_event(VkEvent event) {
@@ -1862,6 +1875,9 @@ bool CompletionDispatcher::has_active_submission(uint64_t through_value) {
   for (const auto& completion : pending_) {
     if (completion.value > through_value) {
       break;
+    }
+    if (!completion.published) {
+      continue;
     }
     if (completion.value <= reached) {
       continue;
@@ -1905,14 +1921,17 @@ void CompletionDispatcher::drain_through(uint64_t max_value) {
       return;
     }
     // reserve() and enqueue() preserve increasing value order.
-    while (!pending_.empty() && pending_.front().value <= max_value) {
+    while (!pending_.empty() && pending_.front().published &&
+           pending_.front().value <= max_value) {
       ready.push_back(std::move(pending_.front()));
       pending_.pop_front();
     }
     // Their retained submit records completed - recovery must never
     // resubmit them again.
-    resubmitable_.erase(
-        resubmitable_.begin(), resubmitable_.upper_bound(max_value));
+    if (!ready.empty()) {
+      resubmitable_.erase(
+          resubmitable_.begin(), resubmitable_.upper_bound(ready.back().value));
+    }
   }
   if (ready.empty()) {
     return;
@@ -2113,8 +2132,12 @@ void CompletionDispatcher::run() {
     if (stop_) {
       return;
     }
-    cv_.wait_for(lk, std::chrono::nanoseconds(kCompletionPollNs), [this] {
-      return stop_ || pending_.empty();
+    const bool awaiting_publication =
+        !pending_.empty() && !pending_.front().published;
+    cv_.wait_for(lk, std::chrono::nanoseconds(kCompletionPollNs),
+                 [this, awaiting_publication] {
+      return stop_ || pending_.empty() ||
+          (awaiting_publication && pending_.front().published);
     });
   }
 }

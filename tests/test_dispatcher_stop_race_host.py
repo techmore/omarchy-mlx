@@ -55,7 +55,7 @@ Allocator& allocator() { static Allocator a; return a; }
 class CompletionDispatcher {
  public:
   struct Completion { uint64_t value; std::vector<std::shared_ptr<void>> temporaries;
-                      std::vector<std::function<void()>> handlers; };
+                      std::vector<std::function<void()>> handlers; bool published; };
   int device_ = 0, semaphore_ = 0;
   std::deque<Completion> pending_;
   std::map<uint64_t, int> resubmitable_;
@@ -73,7 +73,7 @@ class CompletionDispatcher {
 int main() {
   CompletionDispatcher d;
   std::atomic<int> calls{0};
-  d.pending_.push_back({1, {}, {[&] { ++calls; }}});
+  d.pending_.push_back({1, {}, {[&] { ++calls; }}, true});
   d.thread_ = std::thread([&] { d.run(); });
   {
     std::unique_lock<std::mutex> lock(gate_mutex);

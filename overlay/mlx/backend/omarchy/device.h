@@ -238,6 +238,7 @@ class CompletionDispatcher {
     std::vector<std::shared_ptr<void>> temporaries;
     std::vector<std::function<void()>> handlers;
     VkEvent started;
+    bool published;
   };
 
   uint64_t reserve();
@@ -248,18 +249,18 @@ class CompletionDispatcher {
       uint64_t value,
       std::vector<std::shared_ptr<void>> temporaries,
       std::vector<std::function<void()>> handlers,
-      VkEvent started = VK_NULL_HANDLE);
+      VkEvent started = VK_NULL_HANDLE,
+      bool published = true);
+  // Publish a pre-enqueued completion after QueueSubmit returns successfully.
+  // This only flips an existing flag and never allocates.
+  void publish(uint64_t value);
   void wait(uint64_t value);
   uint64_t drained_value();
   void reset_progress_event(VkEvent event);
   bool has_active_submission(uint64_t through_value);
   void shutdown();
 
-  // Everything a submission put on the queue, retained so the watchdog's
-  // recovery ladder can resubmit it when Honeykrisp drops the batch (the
-  // completion timeline never advances and the batch never started
-  // executing). Retained under the dispatcher mutex, erased when the
-  // completion drains.
+  // Legacy replay metadata. The current watchdog does not resubmit work.
   struct ResubmitBatch {
     uint64_t value{0};
     VkCommandBuffer cmd{VK_NULL_HANDLE};
@@ -407,18 +408,10 @@ class Device {
     }
   }
 
-  // Dropped-submission recovery ladder, invoked by the watchdog when a
-  // waited completion value stops advancing. Honeykrisp provably swallows
-  // submissions (the in-tree empty signal-only QueueSubmit fix documents
-  // the deterministic shape; burst observations add real command buffers
-  // whose started event never fires). The ladder resubmits every retained
-  // batch through |target_value| - legal because the single queue is
-  // in-order, so no later completion can have signaled while an earlier
-  // one is still stalled, and the started event proves the batch never
-  // began executing.
+  // A stalled completion does not prove that the driver discarded the
+  // submission. The watchdog refuses replay and reports the stall.
   enum class RecoveryResult : int {
-    // Ladder ran (rung 1 resubmit or rung 2 host-signal); the wait
-    // should restart its no-progress clock and keep waiting.
+    // Reserved for a recovery mechanism that can prove retirement.
     kRecovered = 1,
     // Nothing to recover right now: no retained batch exists at or
     // below last_reserved (another waiter's recovery already took the
