@@ -1722,6 +1722,21 @@ void CompletionDispatcher::wait(uint64_t value) {
   }
 }
 
+bool CompletionDispatcher::wait_execution_retired(
+    uint64_t value,
+    std::chrono::steady_clock::duration budget) {
+  const auto deadline = std::chrono::steady_clock::now() + budget;
+  for (;;) {
+    if (execution_complete(value)) {
+      return true;
+    }
+    if (std::chrono::steady_clock::now() >= deadline) {
+      return false;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+}
+
 bool CompletionDispatcher::wait_settled(
     uint64_t value,
     std::chrono::steady_clock::duration budget) {

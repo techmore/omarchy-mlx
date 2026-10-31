@@ -315,7 +315,9 @@ void CommandEncoder::ensure_recording() {
   int oldest = -1;
   for (int i = 0; i < kInFlightCommandBuffers; ++i) {
     uint64_t value = slots_[i].in_flight;
-    if (value == 0 || completions.drained_value() >= value) {
+    if (value == 0 ||
+        (completions.drained_value() >= value &&
+         completions.execution_complete(value))) {
       slots_[i].in_flight = 0;
       chosen = i;
       break;
@@ -327,6 +329,12 @@ void CommandEncoder::ensure_recording() {
   }
   if (chosen < 0) {
     completions.wait(oldest_value);
+    if (!completions.wait_execution_retired(
+            oldest_value, std::chrono::nanoseconds(submit_hang_no_progress_ns()))) {
+      throw std::runtime_error(
+          "[omarchy] Vulkan command buffer execution fence did not retire "
+          "before the watchdog deadline (Timeout); refusing command buffer reuse.");
+    }
     slots_[oldest].in_flight = 0;
     chosen = oldest;
   }

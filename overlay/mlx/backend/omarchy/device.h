@@ -278,6 +278,11 @@ class CompletionDispatcher {
   // executing (all attached fences signalled). The only sound safe-to-
   // recycle test; the timeline observation is not.
   bool execution_complete(uint64_t value);
+  // A timeline signal alone does not prove that a command buffer is retired.
+  // Wait only up to |budget| for the corresponding execution fence(s).
+  bool wait_execution_retired(
+      uint64_t value,
+      std::chrono::steady_clock::duration budget);
   VkFence acquire_execution_fence();
   // Retire front execution fences whose fence has signalled, advancing
   // the done-through watermark; true when a release_quarantine pass is
