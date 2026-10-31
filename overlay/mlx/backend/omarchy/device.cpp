@@ -1396,6 +1396,7 @@ void Device::abandon_uncertain() {
 
 uint64_t Device::signal_timeline(VkSemaphore semaphore, uint64_t value) {
   std::lock_guard<std::mutex> lk(queue_mutex_);
+  ensure_submit_safe();
   // A CPU-produced event has no GPU submission of its own. Advancing the
   // shared GPU completion timeline here would retire older, still-pending
   // submissions and expose their output before execution completes.
@@ -1784,6 +1785,9 @@ bool CompletionDispatcher::wait_settled(
 
 void CompletionDispatcher::stop_without_draining() {
   {
+    // Match drain_through's lock order. Once stop_ is set, no new drain or
+    // idle release can start; any already-running drain finishes first.
+    std::lock_guard<std::mutex> drain_lk(drain_mutex_);
     std::lock_guard<std::mutex> lk(mutex_);
     stop_ = true;
   }
@@ -1897,6 +1901,9 @@ void CompletionDispatcher::drain_through(uint64_t max_value) {
   std::vector<Completion> ready;
   {
     std::lock_guard<std::mutex> lk(mutex_);
+    if (stop_) {
+      return;
+    }
     // reserve() and enqueue() preserve increasing value order.
     while (!pending_.empty() && pending_.front().value <= max_value) {
       ready.push_back(std::move(pending_.front()));
@@ -2072,6 +2079,13 @@ void CompletionDispatcher::run() {
             settled ? drained_value_
                     : (drained_value_ > 0 ? drained_value_ - 1 : 0);
         lk.unlock();
+        std::lock_guard<std::mutex> drain_lk(drain_mutex_);
+        {
+          std::lock_guard<std::mutex> stop_lk(mutex_);
+          if (stop_) {
+            return;
+          }
+        }
         if (tick_execution_fences() ||
             omarchy::allocator().has_quarantined()) {
           omarchy::allocator().release_quarantine(through);

@@ -26,6 +26,7 @@ class UncertainTeardownTest(unittest.TestCase):
 class CompletionDispatcher {
  public:
   std::mutex mutex_;
+  std::mutex drain_mutex_;
   std::condition_variable cv_;
   bool stop_ = false;
   std::thread thread_;
