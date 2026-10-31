@@ -1433,63 +1433,13 @@ Device::RecoveryResult Device::recover_stalled_submissions(
             executing ? 1 : 0);
   }
 
-  // Execution evidence: the batch's started event (CmdSetEvent at
-  // TOP_OF_PIPE) fired, so the kernels ran and only the completion
-  // signal was lost. Mesa will not publish ANY queue-based signal once
-  // it has wedged a submission's timeline points (measured: fresh-value
-  // resubmission executed, timeline stayed at 0) - but vkSignalSemaphore
-  // from the host cannot be dropped (the in-tree empty-shape fix relies
-  // on exactly that). The wait has seen a full no-progress interval by
-  // definition of this call, so short kernels have long finished;
-  // host-publish the completion at a freshly reserved value.
+  // A started event is recorded at TOP_OF_PIPE: it proves only that the
+  // submission began, not that its shaders finished or their writes are
+  // visible. Do not host-signal its completion or release retained batches.
+  // Leave them owned by the dispatcher and surface the existing watchdog
+  // error. Safe teardown of the device still requires driver cooperation.
   if (executing) {
-    // The retained batches' user (event) semaphores are equally
-    // stranded: their ride-along signals were swallowed with the
-    // submission. Host-signal each at a bumped fresh value (timeline
-    // waits are >=), then publish the completion timeline.
-    auto stranded = completions.take_resubmit_batches(reserved_through);
-    for (auto& batch : stranded) {
-      for (size_t i = 0; i + 1 < batch.signal_values.size(); ++i) {
-        uint64_t current = 0;
-        if (vk::device_table().GetSemaphoreCounterValue(
-                device_, batch.signal_sems[i], &current) != VK_SUCCESS) {
-          current = 0;
-        }
-        batch.signal_values[i] =
-            std::max(batch.signal_values[i], current) + 1;
-      }
-    }
-    uint64_t fresh = completions.reserve();
-    static PFN_vkSignalSemaphore signal_fn = nullptr;
-    if (!signal_fn) {
-      signal_fn = reinterpret_cast<PFN_vkSignalSemaphore>(
-          vk::device_table().GetDeviceProcAddr(
-              handle(), "vkSignalSemaphore"));
-    }
-    VkSemaphoreSignalInfo cc{VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO};
-    cc.semaphore = completions.semaphore();
-    cc.value = fresh;
-    VKX_CHECK(signal_fn(handle(), &cc));
-    for (auto& batch : stranded) {
-      for (size_t i = 0; i + 1 < batch.signal_values.size(); ++i) {
-        VkSemaphoreSignalInfo us{VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO};
-        us.semaphore = batch.signal_sems[i];
-        us.value = batch.signal_values[i];
-        VKX_CHECK(signal_fn(handle(), &us));
-      }
-    }
-    fprintf(
-        stderr,
-        "[rtmod] SUBMIT-RECOVER tid=%lu host-signaled completion cv=%llu after "
-        "executed-but-unsignaled batch (round %u)\n",
-        (unsigned long)syscall(SYS_gettid),
-        (unsigned long long)fresh,
-        round + 1);
-    // Every reserved value needs a pending completion entry: join paths
-    // wait drained_value_ >= counter, and the fresh value's drain is what
-    // lets drained_value_ catch up past the original completion.
-    completions.enqueue(fresh, {}, {});
-    return RecoveryResult::kRecovered;
+    return RecoveryResult::kExhausted;
   }
 
   // No execution evidence: the batch never began. Resubmit it with
