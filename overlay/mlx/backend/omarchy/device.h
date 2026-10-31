@@ -6,6 +6,7 @@
 #include <vulkan/vulkan.h>
 
 #include <array>
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -15,6 +16,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -383,6 +385,19 @@ class Device {
     return queue_mutex_;
   }
 
+  // A failed QueueSubmit may have reached the driver. Do not publish later
+  // completion values or reuse command buffers after this state is set.
+  void mark_submit_uncertain() noexcept {
+    submit_uncertain_.store(true, std::memory_order_release);
+  }
+  void ensure_submit_safe() const {
+    if (submit_uncertain_.load(std::memory_order_acquire)) {
+      throw std::runtime_error(
+          "[omarchy] Vulkan queue submission failed with unknown retirement; "
+          "refusing further GPU work.");
+    }
+  }
+
   // Dropped-submission recovery ladder, invoked by the watchdog when a
   // waited completion value stops advancing. Honeykrisp provably swallows
   // submissions (the in-tree empty signal-only QueueSubmit fix documents
@@ -427,6 +442,7 @@ class Device {
   VkDevice device_{VK_NULL_HANDLE};
   VkQueue queue_{VK_NULL_HANDLE};
   std::mutex queue_mutex_;
+  std::atomic<bool> submit_uncertain_{false};
   std::unique_ptr<ComputeRuntime> compute_;
   std::unique_ptr<CompletionDispatcher> completions_;
 };

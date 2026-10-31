@@ -300,6 +300,7 @@ void CommandEncoder::join_last_completion(const char* reason) {
 }
 
 void CommandEncoder::ensure_recording() {
+  device_.ensure_submit_safe();
   if (recording_) {
     return;
   }
@@ -1122,6 +1123,7 @@ void CommandEncoder::wait_outstanding_submissions() {
 }
 
 void CommandEncoder::submit() {
+  device_.ensure_submit_safe();
   auto& dt = vk::device_table();
   if (std::getenv("MLX_OMARCHY_TRACE_DISPATCH")) {
     fprintf(stderr, "[rtmod] SUBMIT-ENTER tid=%lu\n", (unsigned long)syscall(SYS_gettid));
@@ -1224,6 +1226,8 @@ void CommandEncoder::submit() {
     // QueueSubmit and the dispatcher enqueue. It is never held across a
     // host wait.
     std::lock_guard<std::mutex> lk(device_.queue_mutex());
+    // Another stream may have failed while this one waited for the lock.
+    device_.ensure_submit_safe();
     // Khronos guidance: HOST_VISIBLE memory without HOST_COHERENT needs an
     // explicit flush before submission.
     omarchy::allocator().flush_noncoherent(device_.handle());
@@ -1248,7 +1252,16 @@ void CommandEncoder::submit() {
     si.pSignalSemaphores = signal_sems.data();
     // Declared outside the try so the catch can detach it.
     VkFence submit_fence = VK_NULL_HANDLE;
+    struct UncertainPayload {
+      std::vector<std::shared_ptr<void>> keepalive;
+      std::vector<std::function<void()>> handlers;
+    };
+    std::unique_ptr<UncertainPayload> uncertain_payload;
+    bool submit_attempted = false;
     try {
+      // Allocate before entering the driver so retaining ownership after a
+      // failed submission cannot itself require another allocation.
+      uncertain_payload = std::make_unique<UncertainPayload>();
       queue_t0 = prof::get().profiling() ? prof::host_ns() : 0;
       // Deterministic swallow simulation for the recovery ladder, in the
       // two field-observed classes:
@@ -1313,13 +1326,33 @@ void CommandEncoder::submit() {
           fprintf(stderr, "[rtmod] TEST-STRIP tid=%lu cv=%lu\n",
                   (unsigned long)syscall(SYS_gettid), (unsigned long)completion_value);
         }
+        submit_attempted = true;
         VKX_CHECK(dt.QueueSubmit(device_.queue(), 1, &si, submit_fence));
       }
       queue_t1 = prof::get().profiling() ? prof::host_ns() : 0;
     } catch (...) {
+      if (submit_attempted) {
+        // Failure does not prove that the driver rejected every command.
+        // Keep the fence attached, prevent later timeline signals and slot
+        // reuse, and retain ownership without running completion handlers.
+        device_.mark_submit_uncertain();
+        uncertain_payload->keepalive.swap(keepalive);
+        uncertain_payload->handlers.swap(completed_handlers_);
+        (void)uncertain_payload.release(); // Intentionally retained for process lifetime.
+        if (was_recording) {
+          slots_[current_slot_].in_flight = completion_value;
+        }
+        last_completion_ = completion_value;
+        recording_ = false;
+        pending_.clear();
+        wait_semaphores_.clear();
+        signal_semaphores_.clear();
+        reset_dependency_tracking();
+        throw;
+      }
       device_.completions().detach_execution_fence(
           completion_value, submit_fence);
-      // The submission never reached the driver: the ended command buffer
+      // Failure happened before QueueSubmit: the ended command buffer
       // and the pending semaphore lists are dead (their keepalives have
       // already moved into the local payload and die with this frame).
       // Reset the encoder so it can be reused or destroyed cleanly; the
