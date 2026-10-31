@@ -60,6 +60,18 @@ jobs:
             libopenblas-dev libblas-dev liblapack-dev liblapacke-dev
       - name: Test syntax-check command handling
         run: python3 -m unittest discover -s tests -p test_omarchy_syntax_check.py -v
+      # Host-only mocked Vulkan/dispatcher tests: no Vulkan device is opened.
+      - name: Test fail-closed submission and teardown
+        run: |
+          python3 -m unittest -v \
+            tests.test_stalled_replay_host \
+            tests.test_command_buffer_retirement_host \
+            tests.test_submit_failure_host \
+            tests.test_uncertain_teardown_host \
+            tests.test_dispatcher_stop_race_host \
+            tests.test_signal_poison_race_host \
+            tests.test_completion_publication_host \
+            tests.test_encoder_submission_injection_host
       - name: Prepare patched MLX tree
         run: bash scripts/prepare-mlx.sh
       - name: Configure (CPU-only, omarchy backend)
