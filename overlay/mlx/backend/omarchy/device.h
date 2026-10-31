@@ -222,6 +222,9 @@ class CompletionDispatcher {
  public:
   explicit CompletionDispatcher(VkDevice device, Device* owner = nullptr);
   ~CompletionDispatcher();
+  // Stop the host worker without releasing pending resources or running
+  // handlers. The dispatcher itself must remain alive after this call.
+  void stop_without_draining();
 
   CompletionDispatcher(const CompletionDispatcher&) = delete;
   CompletionDispatcher& operator=(const CompletionDispatcher&) = delete;
@@ -390,8 +393,14 @@ class Device {
   void mark_submit_uncertain() noexcept {
     submit_uncertain_.store(true, std::memory_order_release);
   }
+  bool submit_uncertain() const noexcept {
+    return submit_uncertain_.load(std::memory_order_acquire);
+  }
+  // Stop host workers while keeping this device and its Vulkan objects alive.
+  // Only for process-lifetime containment of an uncertain submission.
+  void abandon_uncertain();
   void ensure_submit_safe() const {
-    if (submit_uncertain_.load(std::memory_order_acquire)) {
+    if (submit_uncertain()) {
       throw std::runtime_error(
           "[omarchy] Vulkan queue submission failed with unknown retirement; "
           "refusing further GPU work.");

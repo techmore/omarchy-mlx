@@ -340,8 +340,18 @@ struct Runtime {
 
   ~Runtime() {
     g_runtime_destroyed.store(true, std::memory_order_release);
+    bool retained_instance = false;
+    for (auto& dev : devices) {
+      if (dev && dev->submit_uncertain()) {
+        // Its queue may still reference device and instance children. Stop
+        // our host workers, then retain the whole object until process exit.
+        dev->abandon_uncertain();
+        (void)dev.release();
+        retained_instance = true;
+      }
+    }
     devices.clear();
-    if (instance != VK_NULL_HANDLE) {
+    if (!retained_instance && instance != VK_NULL_HANDLE) {
       if (auto& it = vk::instance_table(); it.DestroyInstance) {
         it.DestroyInstance(instance, nullptr);
       }
@@ -1377,6 +1387,13 @@ Device::~Device() {
   }
 }
 
+void Device::abandon_uncertain() {
+  cpu_pd_hold_device_destroyed(*this);
+  if (completions_) {
+    completions_->stop_without_draining();
+  }
+}
+
 uint64_t Device::signal_timeline(VkSemaphore semaphore, uint64_t value) {
   std::lock_guard<std::mutex> lk(queue_mutex_);
   // A CPU-produced event has no GPU submission of its own. Advancing the
@@ -1765,7 +1782,7 @@ bool CompletionDispatcher::wait_settled(
   }
 }
 
-void CompletionDispatcher::shutdown() {
+void CompletionDispatcher::stop_without_draining() {
   {
     std::lock_guard<std::mutex> lk(mutex_);
     stop_ = true;
@@ -1774,6 +1791,10 @@ void CompletionDispatcher::shutdown() {
   if (thread_.joinable()) {
     thread_.join();
   }
+}
+
+void CompletionDispatcher::shutdown() {
+  stop_without_draining();
   // Static-destruction order can run this drain after the GPU allocator
   // registry is gone. Handlers still run (the scheduler is leaked by
   // design), but remaining buffer temporaries are intentionally leaked:
@@ -2061,8 +2082,11 @@ void CompletionDispatcher::run() {
     uint64_t current = 0;
     if (vk::device_table().GetSemaphoreCounterValue(
             device_, semaphore_, &current) != VK_SUCCESS) {
-      if (stop_) {
-        return;
+      {
+        std::lock_guard<std::mutex> lk(mutex_);
+        if (stop_) {
+          return;
+        }
       }
       std::this_thread::sleep_for(std::chrono::nanoseconds(kCompletionPollNs));
       continue;
