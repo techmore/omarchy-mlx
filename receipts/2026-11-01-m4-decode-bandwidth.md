@@ -116,9 +116,53 @@ math in `Q4_ROWS`, and the block's scale and bias at the top of the loop
 by -3% to +3% (2048 x 8192: 146.0 -> 151.5 us; 8192 x 2048: 152.6 -> 150.4
 us). Not kept: the backend's scheduler already issues these loads early.
 
+## Short kernels pay for their code size
+
+Two synthetic kernels doing the same integer work, one unrolled
+(straight-line) and one as a loop, on G16 (`gen_icache.py`, `vkchain`, 4
+workgroups, the same shader dispatched 300 times in a row):
+
+| ops per thread | unrolled | code | looped (~340 B) |
+|---:|---:|---:|---:|
+| 250 | 10.7 us | 9.6 KB | 4.9 us |
+| 1000 | 34.7 us | 38 KB | 11.8 us |
+| 4000 | 127 us | 152 KB | 39.6 us |
+
+With 160 or more workgroups the unrolled kernel is as fast as the looped
+one, so the cost is a cold fetch of the code at the start of each
+dispatch, about 0.9 us per KB, even for a 9.6 KB kernel that should fit in
+the cache. Mesa's launch records do not request an instruction-cache
+flush, so the invalidation (or the slow fetch) comes from below the driver.
+Short, large kernels pay it at every launch: decode RoPE compiled to
+41.7 KB (one shader carrying every RoPE form behind runtime flags) and cost
+~37 us per launch for 256-1024 threads.
+
+## Change: half-split RoPE builds
+
+FastRope{,Freqs}{BF16,F16} carry the half-split, traditional and
+passthrough forms behind runtime flags. Builds with
+`-DROPE_HALF_SPLIT_ONLY` fix the traditional and passthrough flags false so
+those branches fold away (bf16: 41.7 KB / 4402 instructions -> 16.8 KB /
+1778), routed when the flags select the half-split form
+(`MLX_OMARCHY_NO_ROPE_HALF_SPLIT=1` keeps the general builds). 72/72 rope
+cases (`rope_bits.py`: bf16/f16, base/freqs, traditional or not, decode and
+17-token shapes, offsets 0/37/4093) are bit-identical. Decode, 32 tokens,
+two runs each, general -> half-split:
+
+| model | tok/s |
+|---|---:|
+| granite-4.0-1b-4bit | 47.9 -> 51.8 |
+| Qwen2.5-0.5B-Instruct-4bit | 116.5 -> 121.8 |
+| Qwen2.5-1.5B-Instruct-4bit | 62.2 -> 63.8 |
+| gemma-3-1b-it-4bit | 53.9 -> 55.0 |
+| Llama-3.2-3B-Instruct-4bit | 15.9 -> 16.1 |
+| Llama-3.2-1B-Instruct-4bit | within noise |
+
 ## Next
 
-Keep cutting instructions per weight byte, and look at what the in-model
+Shrink the other large short kernels: bf16 SdpaDecodeNative Hd128/Hd256
+(12.3 KB, against 1.5-2.2 KB for f16) and FastRopeNormAppleBF16 (31.5 KB,
+Qwen3.5). Keep cutting instructions per weight byte, and look at what the in-model
 GEMV does that the mimic does not (the subgroup reduction and store, the
 real dependency between each load and its decode). The system ceiling
 (82-85 vs ~100 GB/s on macOS) is the other half.
