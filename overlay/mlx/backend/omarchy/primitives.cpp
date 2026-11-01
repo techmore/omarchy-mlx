@@ -719,7 +719,7 @@ void dispatch_matmul(
   // same way the qmm route does instead of assuming it.
   constexpr uint32_t kMatmulCoopmatBf16SharedBytes =
       (32u * 16u + 16u * 32u) * sizeof(float);
-  const bool coopmat = !sdpa && coopmat_base && coopmat_alpha &&
+  bool coopmat = !sdpa && coopmat_base && coopmat_alpha &&
       (kernel == omarchy::ComputeKernel::MatmulF32 ||
        (kernel == omarchy::ComputeKernel::MatmulBF16 && bf16_aligned &&
         (params.matrix_k % 8u) == 0u && params.matrix_m >= 32u &&
@@ -730,6 +730,18 @@ void dispatch_matmul(
   // cell); where it does not (stock Mesa) the FMA kernel triples the
   // shipped staged-tile fallback (645.2 vs 195.0). The FMA pick is
   // therefore reserved for drivers without the cooperative matrix.
+  // Apple G16 (M4) Honeykrisp is the exception: there the scalar-FMA
+  // kernel beats the bf16 cooperative-matrix tile in every linear-layer
+  // cell measured (Llama 3.2 1B shapes, m 128-2048: 834-1197 vs
+  // 599-733 GFLOP/s; receipts/2026-11-01-m4-cooperative-matrix-default.md),
+  // so the linear-layer orientation keeps the FMA route there. Attention
+  // shapes (alpha != 1, other orientations) still take the cooperative
+  // matrix.
+  static const bool g16_bf16_fma =
+      caps.device_name.find("G16") != std::string::npos;
+  if (bf16_fma && coopmat && g16_bf16_fma && !sdpa) {
+    coopmat = false;
+  }
   bf16_fma = bf16_fma && !coopmat && !sdpa;
   // Bit 8 tells matmul_coopmat_bf16.comp its operands are 8-byte
   // aligned, so the two word-adjacent orientations stage with uvec2
