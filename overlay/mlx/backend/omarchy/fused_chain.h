@@ -230,7 +230,8 @@ bool kv_direct_enabled();
 
 // MLX_OMARCHY_FUSED_GEMV=0 keeps every QuantizedMatmul, dense BF16
 // decode GEMV group, and Add on the per-node path (the
-// MLX_OMARCHY_FUSED_CHAIN gate also covers it).
+// MLX_OMARCHY_FUSED_CHAIN gate also covers it). Off by default on G16
+// (Apple M4), where the per-node path is faster; =1 forces it on.
 bool fused_gemv_enabled();
 
 // MLX_OMARCHY_OUTGATE_FOLD=0/1 overrides; default off on G13 parts other
@@ -250,6 +251,7 @@ bool gemv_token_multi_enabled();
 // Decode trio: MLX_OMARCHY_FUSED_TRIO=0 keeps f16 RMSNorm rows, the
 // fused SwiGLU chain dispatch, and RoPE pairs on their standalone
 // kernels and paths (the MLX_OMARCHY_FUSED_CHAIN gate also covers it).
+// Off by default on G16 (Apple M4); =1 forces it on.
 bool fused_trio_enabled();
 
 // Validates a planned (query, key) RoPE pair against the FastTrioRopePairF16

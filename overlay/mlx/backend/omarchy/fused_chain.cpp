@@ -1885,10 +1885,22 @@ bool outgate_fold_enabled() {
   return !legacy_g13;
 }
 
+// Apple9 (G16, M4) Honeykrisp decodes 25-55% faster on the per-node GEMV
+// and standalone trio kernels than on the fused groups (granite 1B 45.7 vs
+// 36.6 tok/s, Qwen2.5 1.5B 50.2 vs 36.6; receipts/2026-11-01-m4-decode-
+// defaults.md), so both fused routes default off there. An explicit
+// MLX_OMARCHY_FUSED_GEMV / MLX_OMARCHY_FUSED_TRIO setting still wins.
+static bool fused_decode_default() {
+  static const bool g16 =
+      device().capabilities().device_name.find("G16") != std::string::npos;
+  return !g16;
+}
+
 bool fused_gemv_enabled() {
   return fused_chain_enabled() &&
-      (std::getenv("MLX_OMARCHY_FUSED_GEMV") == nullptr ||
-       env_flag("MLX_OMARCHY_FUSED_GEMV"));
+      (std::getenv("MLX_OMARCHY_FUSED_GEMV") == nullptr
+           ? fused_decode_default()
+           : env_flag("MLX_OMARCHY_FUSED_GEMV"));
 }
 
 // MLX_OMARCHY_FUSED_GEMV_SWIGLU=0 keeps the SwiGLU store epilogue off
@@ -1910,8 +1922,9 @@ bool gemv_token_multi_enabled() {
 
 bool fused_trio_enabled() {
   return fused_chain_enabled() &&
-      (std::getenv("MLX_OMARCHY_FUSED_TRIO") == nullptr ||
-       env_flag("MLX_OMARCHY_FUSED_TRIO"));
+      (std::getenv("MLX_OMARCHY_FUSED_TRIO") == nullptr
+           ? fused_decode_default()
+           : env_flag("MLX_OMARCHY_FUSED_TRIO"));
 }
 
 bool kv_direct_enabled() {
