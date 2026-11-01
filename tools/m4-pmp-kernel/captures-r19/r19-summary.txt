@@ -1,0 +1,60 @@
+kernel 7.1.13-1-19-ARCH
+== PMP off
+perf-state idle: 0x00000003
+gpu: type=1 flags=DVC- vec=4 groups=1280 threads=327680 MiB=1024    13.16 ms    81.6 GB/s
+cpu threads= 8 read   67.2 GB/s
+cpu threads=10 read   69.9 GB/s
+== starting PMP
+bind exit 0
+[   69.640427] apple_pmp 380500000.pmp: initialized PMP monitor "ltr-monitor" to 1
+[   69.658405] apple_pmp 380500000.pmp: initialized PMP monitor "atc0-monitor" to 1
+[   69.678718] apple_pmp 380500000.pmp: initialized PMP monitor "atc1-monitor" to 1
+[   69.700636] apple_pmp 380500000.pmp: initialized PMP monitor "atc2-monitor" to 1
+[   69.724819] apple_pmp 380500000.pmp: initialized PMP monitor "atc3-monitor" to 1
+[   69.750172] apple_pmp 380500000.pmp: initialized PMP monitor "ans-monitor" to 1
+[   69.775112] apple_pmp 380500000.pmp: initialized PMP monitor "pcie-monitor" to 1
+[   69.800732] apple_pmp 380500000.pmp: initialized PMP monitor "gfxc-monitor" to 1
+[   69.827257] apple_pmp 380500000.pmp: initialized PMP monitor "sbr-monitor" to 1
+[   69.854552] apple_pmp 380500000.pmp: initialized PMP monitor "sep-monitor" to 1
+[   69.882641] apple_pmp 380500000.pmp: initialized PMP monitor "sio-monitor" to 1
+[   69.991001] apple_pmp 380500000.pmp: unknown property "apple,tunable-lts-acsk-tddb-config"
+[   70.077226] apple_pmp 380500000.pmp: RTKit: syslog message: io.cpp:54: PMP started
+[   70.079186] apple-pmp-report 3803c0000.pmp-report: post-ready enable bit 12: target=0x6fff9090 actual=0xfff9c00 ret=0
+[   70.079404] apple-pmp-report 3803c0000.pmp-report: post-ready disable bit 18: target=0x6ffb9090 actual=0xffb9c00 ret=0
+[   70.079410] apple_pmp 380500000.pmp: PMP device-power request 0x0020f50100000000 sent
+[   70.079516] apple_pmp 380500000.pmp: PMP device-power reply 0x0021000000000000
+[   70.081322] apple-pmp-report 3803c0000.pmp-report: PMP AGX vote: send 0, acknowledged after 1 ms
+[   70.081329] apple_pmp 380500000.pmp: PMP device-power request 0x0020f80100000000 sent
+[   70.081355] apple_pmp 380500000.pmp: PMP device-power reply 0x0021000000000000
+[   70.082037] apple_pmp 380500000.pmp: PMP AdvertiseDone count=0x17c advertisements=450 wire_entries=405
+[   70.082084] apple_pmp 380500000.pmp: PMP AdvertiseDone count=0x17f advertisements=450 wire_entries=405
+[   70.082123] apple_pmp 380500000.pmp: PMP AdvertiseDone count=0x182 advertisements=450 wire_entries=405
+[   70.082272] apple_pmp 380500000.pmp: PMP AdvertiseDone count=0x18a advertisements=450 wire_entries=405
+[   70.083157] apple-pmp-report 3803c0000.pmp-report: PMP DISP vote: send 0, acknowledged after 1 ms
+pmc bound: 0 
+perf-state idle with PMP: 0x00000000
+cpu threads= 8 read   80.6 GB/s
+cpu threads=10 read   85.5 GB/s
+== GPU job with PMP (30 s kill timeout)
+t1 perf-state: 0x00000001
+t2 perf-state: 0x00000001
+t3 perf-state: 0x00000001
+t4 perf-state: 0x00000001
+t5 perf-state: 0x00000001
+t6 perf-state: 0x00000001
+gpu: DRM_IOCTL_ASAHI_SUBMIT failed: Input/output error
+[   73.400999] asahi_m4 302600000.gpu: G16: failed Event kind=4 cursor=72 flights=1
+[   73.401011] asahi_m4 302600000.gpu: G16: Event +0x0=0x0000000000000004
+[   73.401017] asahi_m4 302600000.gpu: G16: Event +0x8=0xffffffff00000000
+[   73.401021] asahi_m4 302600000.gpu: G16: Event +0x10=0x0000000000000000
+[   73.401025] asahi_m4 302600000.gpu: G16: Event +0x18=0x0000000000000000
+[   73.401029] asahi_m4 302600000.gpu: G16: Event +0x20=0x0000000000000000
+[   73.401032] asahi_m4 302600000.gpu: G16: Event +0x28=0x0000000000000000
+[   73.401036] asahi_m4 302600000.gpu: G16: Event +0x30=0x0000000000000000
+[   73.401039] asahi_m4 302600000.gpu: G16: Event +0x38=0x0000000000000000
+[   73.401043] asahi_m4 302600000.gpu: G16: Event +0x40=0x0000000000000000
+[   73.401045] asahi_m4 302600000.gpu: G16: pending Work=0xfffffc220024c000 context=1 age_ms=8 render=false
+[   73.401051] asahi_m4 302600000.gpu: G16: stage=0 event=34 stamp=0xfffffc22002e9040 actual=0x0 expected=0x100 pointers=0xfffffc22002e8000 read=0 done=1 target=1
+[   73.401056] asahi_m4 302600000.gpu: G16: firmware event service failed: EIO
+[   73.401059] asahi_m4: G16: firmware retirement failed: EIO
+[   73.401062] asahi_m4: G16: submission pipeline failed: EIO, 1 jobs, 1 issued
