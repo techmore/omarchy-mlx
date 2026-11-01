@@ -201,6 +201,29 @@
 		power-domains = <&ps_pmp>;
 	};
 
+	/*
+	 * PMC voter interface (aurora-silicon m4/pr1-basic-bringup,
+	 * t8132-memory.dtsi and J713's static voter): PMP sets DRAM (DCS) and
+	 * fabric speed from the agents' votes; the AP's agent 3 votes DCS 5 /
+	 * fabric 3 through CLPC while a CPU cluster or the GPU is busy.
+	 */
+	pmc: pmc@382800000 {
+		compatible = "apple,t8132-pmc";
+		reg = <0x3 0x82800000 0x0 0x10000>,
+		      <0x3 0x828aa000 0x0 0x3000>;
+		reg-names = "voters", "rails";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		apple,pmp = <&pmp>;
+		apple,static-voters = <3>;
+
+		clpc: performance-controller@3 {
+			compatible = "apple,t8132-clpc";
+			reg = <3>;
+			apple,gpu-power-state = <&ps_gfx>;
+		};
+	};
+
 	pmp_mbox: mailbox@380e08000 {
 		compatible = "apple,t8103-asc-mailbox", "apple,asc-mailbox-v4";
 		reg = <0x3 0x80e08000 0x0 0x4000>;
