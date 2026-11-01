@@ -158,6 +158,22 @@ two runs each, general -> half-split:
 | Llama-3.2-3B-Instruct-4bit | 15.9 -> 16.1 |
 | Llama-3.2-1B-Instruct-4bit | within noise |
 
+## Change: bf16 decode attention on 256 lanes
+
+The composition-exact bf16 `sdpa_decode_native` arm ran 1024-lane
+workgroups, but only lanes 0..255 do softmax work and lanes below the head
+dimension produce outputs; the rest computed a quarter of the scores and
+waited at ~22 workgroup barriers. 256 lanes striding the keys by 256 give
+the same per-key chains: 30/30 decode SDPA cases (`sdpa_bits.py`: bf16/f16,
+head dim 64/128/256, 1-600 keys) are bit-identical. bf16 decode SDPA, 16
+heads x 128: 98 -> 90 us at 40 keys, 152 -> 135 us at 400 (f16: 26 / 47).
+Decode: granite 1B 51.8 -> 52.4 tok/s, Qwen3.5 4B 21.3 -> 21.6.
+
+Tried and not kept, both bit-identical: rolling the arm's outer loops
+(12.3 -> 7.1 KB, but 98 -> 121 us: the unrolled loads overlap), and
+finishing both reduction trees in one subgroup with shuffles (neutral
+within the +-7% noise at 40 keys).
+
 ## Next
 
 Shrink the other large short kernels: bf16 SdpaDecodeNative Hd128/Hd256
