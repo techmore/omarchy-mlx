@@ -39,7 +39,10 @@ CPU read (`cpubw.c`, NEON, 1 GiB): 1 thread 33 GB/s, 4 threads 55, 10
 threads 71.
 
 Reference: the base M4 reaches about 100 GB/s under macOS (Apple vs.
-Oranges, arXiv 2502.05317, of a 120 GB/s rating). The device tree has no
+Oranges, arXiv 2502.05317, of a 120 GB/s rating). That paper dates from
+February 2025, so its figures come from an older macOS release than the
+current 27.2. Once Linux meets or exceeds them, re-baseline: run the same
+probes (Metal ports of `tools/m4-bw-probe`) on an M4 under macOS 27.2. The device tree has no
 memory power-management node and nothing on Linux requests a memory
 performance state; that is the likely system gap.
 
@@ -105,8 +108,17 @@ odd shapes) are bit-identical. Decode, 32 tokens, two runs each:
 | Mistral-7B-Instruct-v0.3-4bit | 18.8 | 19.2 |
 | Llama-3.2-1B-Instruct-8bit | 28.6 | 28.8 |
 
+## Tried: software prefetch (no gain)
+
+Loading the next iteration's weight words before the current iteration's
+math in `Q4_ROWS`, and the block's scale and bias at the top of the loop
+(load order only), stayed bit-identical on all 90 cases but moved GEMV time
+by -3% to +3% (2048 x 8192: 146.0 -> 151.5 us; 8192 x 2048: 152.6 -> 150.4
+us). Not kept: the backend's scheduler already issues these loads early.
+
 ## Next
 
-Prefetch the next iteration's weight words before the current iteration's
-math in `Q4_ROWS` (load order only, so still bit-exact), and keep cutting
-instructions per weight byte.
+Keep cutting instructions per weight byte, and look at what the in-model
+GEMV does that the mimic does not (the subgroup reduction and store, the
+real dependency between each load and its decode). The system ceiling
+(82-85 vs ~100 GB/s on macOS) is the other half.
