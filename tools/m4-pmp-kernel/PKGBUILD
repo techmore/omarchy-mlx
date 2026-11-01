@@ -1,0 +1,220 @@
+# SPDX-License-Identifier: MIT
+# Kernel package for the M4 Mac mini (J773g): GravityLinux's gravity-m4 tree,
+# the same pin as tools/j773g/inner-build.sh, packaged the way asahi-alarm's
+# linux-asahi and Omarchy's linux-aurora are so omarchy-mac-boot, update-m1n1
+# (the *-ARCH dtbs glob) and the Limine UKI hooks find it. Config = asahi-alarm's
+# linux-asahi 7.1.13 config + j773g.fragment (docs/j773g-phase3-plan.md §3).
+# Based on the asahi-alarm linux-asahi PKGBUILD by Jos Dehaes and Matthias Kurz.
+
+_gravityver=7.1.13
+_gravityrel=1
+pkgrel=8
+
+# GravityLinux/linux branch gravity-m4, hardware-tested on J773g (PLAN.md §3).
+_commit=4fc326f6c25ccceb7515e2635c22e01fde5d3bac
+_m1n1_version=1.6.1
+
+pkgbase=linux-gravity-m4
+_srcname=linux-${_commit}
+_desc="AArch64 Apple M4 Mac mini (GravityLinux gravity-m4 kernel)"
+pkgver="${_gravityver}.gravity${_gravityrel}"
+arch=('aarch64')
+url="https://github.com/GravityLinux/linux"
+license=('GPL-2.0-only')
+
+makedepends=(
+  base-devel bc dtc kmod libelf pahole cpio perl rustup rust-bindgen tar xz xmlto python
+)
+options=('!strip')
+source=(
+  "linux-gravity-${_commit}.tar.gz::https://github.com/GravityLinux/linux/archive/${_commit}.tar.gz"
+  config
+  j773g.fragment
+  rust-toolchain.toml
+  t8132-j773g-pmu.dtsi
+  t8132-j773g-headphones.dtsi
+  j773g-headphones.patch
+  pmp-t8132.patch
+  t8132-j773g-pmp.dtsi
+)
+sha256sums=('045c64540fa4210394c899cad6320c5bf9090a66919938d986aeaad0033946e8'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP')
+
+export ARCH=arm64
+# rustup's proxies first, so rust-toolchain.toml picks 1.93.1.
+export PATH="$HOME/.cargo/bin:$PATH"
+export KBUILD_BUILD_HOST=archlinux
+export KBUILD_BUILD_USER=$pkgbase
+export KBUILD_BUILD_TIMESTAMP="$(date -Ru${SOURCE_DATE_EPOCH:+d @$SOURCE_DATE_EPOCH})"
+
+prepare() {
+  cd $_srcname
+
+  echo "Setting version..."
+  echo "-$_gravityrel-$pkgrel" > localversion.10-pkgrel
+
+  echo "Pinning the Rust toolchain..."
+  cp ../rust-toolchain.toml .
+  # pkgrel 8 (PMP test build): rustup may be a per-user install.
+  PATH="$HOME/.cargo/bin:$PATH" rustup toolchain install 1.93.1 --profile minimal --component rust-src --component rustfmt --target aarch64-unknown-linux-gnu
+
+  # Gravity's SMC node has no reboot or rtc child, so poweroff only halts and
+  # the mini stays on. The Abbey PMU cells give macsmc-reboot its shutdown
+  # flag, as the M4 Air fix (docs/j713-poweroff.md, docs/j773g-poweroff.md).
+  echo "Adding the PMU, SMC poweroff and RTC nodes to the J773g device tree..."
+  cp ../t8132-j773g-pmu.dtsi arch/arm64/boot/dts/apple/
+  grep -q t8132-j773g-pmu.dtsi arch/arm64/boot/dts/apple/t8132-j773g.dts ||
+    echo '#include "t8132-j773g-pmu.dtsi"' >> arch/arm64/boot/dts/apple/t8132-j773g.dts
+
+  # 3.5 mm jack: the CS42L84 on i2c1 and a cluster-2 card driver ported from
+  # the J713 headphones (same T8132 MCA cluster 2, ADMAC 4/5
+  # and codec wiring on the mini). Its own card, beside the protected
+  # speaker card; it never touches the speaker amp.
+  echo "Adding the J773g headphone jack (CS42L84, MCA cluster 2)..."
+  patch -Np1 < ../j773g-headphones.patch
+  cp ../t8132-j773g-headphones.dtsi arch/arm64/boot/dts/apple/
+  grep -q t8132-j773g-headphones.dtsi arch/arm64/boot/dts/apple/t8132-j773g.dts ||
+    echo '#include "t8132-j773g-headphones.dtsi"' >> arch/arm64/boot/dts/apple/t8132-j773g.dts
+
+  # PMP (power management co-processor) for T8132, backported from
+  # GravityLinux replacement/115-pmp and replacement/000-devicetree. The
+  # device tree keeps a kernel without this support from binding any of it.
+  echo "Adding T8132 PMP support and the J773g PMP nodes..."
+  patch -Np1 < ../pmp-t8132.patch
+  cp ../t8132-j773g-pmp.dtsi arch/arm64/boot/dts/apple/
+  grep -q t8132-j773g-pmp.dtsi arch/arm64/boot/dts/apple/t8132-j773g.dts ||
+    echo '#include "t8132-j773g-pmp.dtsi"' >> arch/arm64/boot/dts/apple/t8132-j773g.dts
+
+  # linux-api-headers 7.3 use __u128 in <asm/sigcontext.h>; the 7.1 tools
+  # copy of <linux/types.h> (tools/include/linux) predates it, so host tools (resolve_btfids)
+  # fail to build. Same typedefs as the system header.
+  grep -q __u128 tools/include/linux/types.h ||
+    sed -i '0,/^#include <asm\/posix_types.h>$/s//#include <asm\/posix_types.h>\n\n#ifdef __SIZEOF_INT128__\ntypedef __signed__ __int128 __s128 __attribute__((aligned(16)));\ntypedef unsigned __int128 __u128 __attribute__((aligned(16)));\n#endif/' tools/include/linux/types.h
+
+  echo "Creating build directories..."
+  mkdir -p build/base
+
+  echo "Setting config (base = asahi-alarm 7.1.13 + j773g.fragment)..."
+  scripts/kconfig/merge_config.sh -m -O build/base ../config ../j773g.fragment
+  make olddefconfig prepare O=$PWD/build/base
+  # Every fragment choice must survive olddefconfig.
+  local sym want got
+  while read -r sym want; do
+    got=$(grep -E "^${sym}=" build/base/.config | cut -d= -f2)
+    if [[ $want == n ]]; then
+      [[ -z $got ]] || { echo "config: $sym=$got, wanted n" >&2; return 1; }
+    else
+      [[ $got == "$want" ]] || { echo "config: $sym=${got:-unset}, wanted $want" >&2; return 1; }
+    fi
+  done < <(sed -n 's/^\(CONFIG_[A-Z0-9_]*\)=\(.*\)$/\1 \2/p' ../j773g.fragment)
+  grep -q '^CONFIG_LOCALVERSION="-ARCH"' build/base/.config
+  make -s kernelrelease O=$PWD/build/base > build/base/version
+
+  echo "Prepared $pkgbase version $(<build/base/version)"
+}
+
+build() {
+  cd $_srcname
+  make all O=$PWD/build/base -j "$(nproc)"
+}
+
+_package_kernel() {
+  pkgdesc="The $_desc and modules"
+  depends=(coreutils kmod initramfs "m1n1>=$_m1n1_version")
+  optdepends=('linux-firmware: firmware images needed for some devices')
+  # omarchy-mac-boot and the Omarchy image builder know linux-asahi and
+  # linux-aurora; this package stands in for them on the mini. No generic
+  # "linux" provide, as on every aarch64 Asahi kernel.
+  provides=(WIREGUARD-MODULE "linux-asahi=${pkgver}")
+  conflicts=(linux-asahi linux-aurora)
+
+  local kernver="$(<$O/version)"
+  local modulesdir="$pkgdir/usr/lib/modules/$kernver"
+
+  echo "Installing boot image..."
+  install -Dm644 "$O"/arch/arm64/boot/Image "$modulesdir/vmlinuz"
+
+  # Used by mkinitcpio and the Limine hooks to name the kernel
+  echo "$1" | install -Dm644 /dev/stdin "$modulesdir/pkgbase"
+
+  echo "Installing modules..."
+  make O="$O" INSTALL_MOD_PATH="$pkgdir/usr" INSTALL_MOD_STRIP=1 modules_install
+
+  echo "Installing device trees..."
+  install -Dt "$modulesdir/dtbs" "$O"/arch/arm64/boot/dts/apple/*.dtb
+  test -f "$modulesdir/dtbs/t8132-j773g.dtb"
+
+  rm -f "$modulesdir"/{source,build}
+}
+
+_package() {
+  cd $_srcname
+  export O="$PWD/build/base"
+  _package_kernel "$pkgbase"
+}
+
+_package-headers() {
+  pkgdesc="Headers and scripts for building modules for the $_desc"
+  depends=(pahole)
+  provides=("linux-asahi-headers=${pkgver}")
+  conflicts=(linux-asahi-headers linux-aurora-headers)
+
+  local KARCH=arm64
+  cd $_srcname
+  local O=build/base
+  local builddir="$pkgdir/usr/lib/modules/$(<${O}/version)/build"
+
+  echo "Installing build files..."
+  install -Dt "$builddir" -m644 $O/.config Makefile $O/Module.symvers $O/System.map \
+    localversion.* $O/version $O/vmlinux
+  install -Dt "$builddir/kernel" -m644 kernel/Makefile
+  cp -t "$builddir" -a scripts $O/scripts
+  install -Dt "$builddir/tools/bpf/resolve_btfids" $O/tools/bpf/resolve_btfids/resolve_btfids
+
+  echo "Installing headers..."
+  cp -t "$builddir" -a include $O/include
+  install -Dt "${builddir}/arch/${KARCH}" -m644 arch/${KARCH}/Makefile
+  install -Dt "${builddir}/arch/${KARCH}/kernel" -m644 $O/arch/${KARCH}/kernel/asm-offsets.s
+  cp -t "${builddir}/arch/${KARCH}" -a arch/${KARCH}/include $O/arch/${KARCH}/include
+  install -Dt "$builddir/drivers/md" -m644 drivers/md/*.h
+  install -Dt "$builddir/net/mac80211" -m644 net/mac80211/*.h
+  install -Dt "$builddir/drivers/media/i2c" -m644 drivers/media/i2c/msp3400-driver.h
+  install -Dt "$builddir/drivers/media/usb/dvb-usb" -m644 drivers/media/usb/dvb-usb/*.h
+  install -Dt "$builddir/drivers/media/dvb-frontends" -m644 drivers/media/dvb-frontends/*.h
+  install -Dt "$builddir/drivers/media/tuners" -m644 drivers/media/tuners/*.h
+  install -Dt "$builddir/drivers/iio/common/hid-sensors" -m644 drivers/iio/common/hid-sensors/*.h
+
+  echo "Installing KConfig files..."
+  find . -name 'Kconfig*' -exec install -Dm644 {} "$builddir/{}" \;
+
+  echo "Removing unneeded architectures..."
+  local arch
+  for arch in "$builddir"/arch/*/; do
+    [[ $arch = */${KARCH}/ ]] && continue
+    rm -r "$arch"
+  done
+
+  echo "Removing documentation, broken symlinks, objects and cmd files..."
+  rm -rf "$builddir/Documentation"
+  find -L "$builddir" -type l -delete
+  find "$builddir" -type f -name '*.o' -delete
+  find "$builddir" -type f -name '*.cmd' -delete
+
+  echo "Adding symlink..."
+  mkdir -p "$pkgdir/usr/src"
+  ln -sr "$builddir" "$pkgdir/usr/src/$pkgbase"
+}
+
+pkgname=("$pkgbase" "$pkgbase-headers")
+for _p in "${pkgname[@]}"; do
+  eval "package_$_p() {
+    _package${_p#$pkgbase}
+  }"
+done

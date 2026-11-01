@@ -1,0 +1,21 @@
+kernel 7.1.13-1-7-ARCH
+cmdline root=UUID=4f4d5801-524f-4f54-8000-000000000001 rw rootflags=subvol=@,x-systemd.device-timeout=0 zswap.enabled=0 rootfstype=btrfs idle=nop nohlt arm64.nowfxt efi=noruntime quiet loglevel=0 systemd.show_status=false rd.udev.log_level=0 vt.global_cursor_default=0 plymouth.ignore-serial-consoles
+pmp driver: 0 bound, report: 0 bound
+gpu read 128-bit: type=1 flags=DVC- vec=4 groups=1280 threads=327680 MiB=1024    13.13 ms    81.8 GB/s
+gpu read  32-bit: type=1 flags=DVC- vec=1 groups=1280 threads=327680 MiB=1024    15.26 ms    70.4 GB/s
+gpu read 128-bit: type=1 flags=DVC- vec=4 groups=1280 threads=327680 MiB=1024    13.14 ms    81.7 GB/s
+gpu read  32-bit: type=1 flags=DVC- vec=1 groups=1280 threads=327680 MiB=1024    15.28 ms    70.3 GB/s
+gpu read 128-bit: type=1 flags=DVC- vec=4 groups=1280 threads=327680 MiB=1024    13.14 ms    81.7 GB/s
+gpu read  32-bit: type=1 flags=DVC- vec=1 groups=1280 threads=327680 MiB=1024    15.25 ms    70.4 GB/s
+cpu threads= 1 read   34.2 GB/s
+cpu threads= 2 read   42.1 GB/s
+cpu threads= 4 read   56.6 GB/s
+cpu threads= 6 read   62.6 GB/s
+cpu threads= 8 read   66.2 GB/s
+cpu threads=10 read   69.3 GB/s
+decode granite-4.0-1b-4bit: 52.44 tok/s
+decode Qwen2.5-1.5B-Instruct-4bit: 64.01 tok/s
+decode Llama-3.2-1B-Instruct-4bit: 32.37 tok/s
+decode Mistral-7B-Instruct-v0.3-4bit: 19.33 tok/s
+prefill granite 512: 384.1 tok/s
+PMP_AB_DONE

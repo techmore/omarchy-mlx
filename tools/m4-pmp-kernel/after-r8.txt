@@ -1,0 +1,9 @@
+kernel 7.1.13-1-8-ARCH
+pmp: started (firmware "PMP started"), report finalize bits 12/18 ret=0
+gpu: firmware crashed 4 s after boot: agfMTRAlarmHandler: Received MTR Alarm interrupt from GPU but no match found in MTR hardware
+cpu threads= 1 read   17.9 GB/s
+cpu threads= 2 read   20.6 GB/s
+cpu threads= 4 read   20.9 GB/s
+cpu threads= 6 read   21.0 GB/s
+cpu threads= 8 read   21.0 GB/s
+cpu threads=10 read   21.0 GB/s

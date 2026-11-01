@@ -1,0 +1,219 @@
+// SPDX-License-Identifier: GPL-2.0+ OR MIT
+/*
+ * J773g: the PMP power-management co-processor, its DART, mailbox and report
+ * votes. Nodes and votes are GravityLinux replacement/000-devicetree's
+ * (t8132.dtsi + t8132-j773g.dts, "Research (t8132-pmp-power)" and
+ * "(t8132-pmp-votes)"), with two changes so a kernel without T8132 PMP
+ * support ignores all of it:
+ *  - pmp lists only "apple,t8132-pmp-v2" (no "apple,t6000-pmp-v2" fallback,
+ *    which older kernels would bind with the T6000 protocol). m1n1 finds the
+ *    node through the pmp alias, fills in board-id, DRAM ids and the ADT
+ *    tunables, and sets it okay.
+ *  - The GPU does not take pmp_report_agx as a power domain (an older kernel
+ *    has no "apple,t8132-pmp-v2-report" provider and would never probe the
+ *    GPU). pmp-agx is always-on, so PMP sees the GPU powered throughout.
+ */
+
+/ {
+	aliases {
+		pmp = &pmp;
+	};
+};
+
+&soc {
+	pmp_dart: iommu@380300000 {
+		compatible = "apple,t8132-dart", "apple,t8110-dart";
+		reg = <0x3 0x80300000 0x0 0xc000>;
+		#iommu-cells = <1>;
+		interrupt-parent = <&aic>;
+		interrupts = <AIC_IRQ 881 IRQ_TYPE_LEVEL_HIGH>;
+		power-domains = <&ps_pmp>;
+		apple,dma-range = <0x100 0x0 0x10 0x0>;
+	};
+
+	pmp_report: pmp-report@3803c0000 {
+		compatible = "apple,t8132-pmp-v2-report";
+		reg = <0x3 0x803c0000 0x0 0x20000>,
+		      <0x3 0x828ac000 0x0 0x2c>;
+		reg-names = "report", "event-config";
+		power-domains = <&ps_pms_sram>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		/* Native macOS asserts these two startup votes before the
+		 * DISPEXT1_SYS vote and before starting PMP. */
+		report@f {
+			compatible = "apple,t6000-pmp-v2-report-entry";
+			reg = <0xf>;
+			label = "pmp-boot-f";
+			#power-domain-cells = <0>;
+			apple,always-on;
+		};
+
+		report@10 {
+			compatible = "apple,t6000-pmp-v2-report-entry";
+			reg = <0x10>;
+			label = "pmp-boot-10";
+			#power-domain-cells = <0>;
+			apple,always-on;
+		};
+
+		report@11 {
+			compatible = "apple,t6000-pmp-v2-report-entry";
+			reg = <0x11>;
+			label = "pmp-dispext1";
+			#power-domain-cells = <0>;
+			power-domains = <&ps_dispext1_sys>;
+			apple,always-on;
+		};
+
+		report@12 {
+			compatible = "apple,t6000-pmp-v2-report-entry";
+			reg = <0x12>;
+			label = "pmp-atc0-common";
+			#power-domain-cells = <0>;
+			apple,always-on;
+		};
+
+		report@15 {
+			compatible = "apple,t6000-pmp-v2-report-entry";
+			reg = <0x15>;
+			label = "pmp-atc3-common";
+			#power-domain-cells = <0>;
+			apple,always-on;
+		};
+
+		/* PMP reads the GPU block while it runs and takes a bus error if
+		 * the GPU domain is off: keep this vote, and ps_gfx, on. */
+		report@4 {
+			compatible = "apple,t6000-pmp-v2-report-entry";
+			reg = <0x4>;
+			label = "pmp-agx";
+			#power-domain-cells = <0>;
+			power-domains = <&ps_gfx>;
+			apple,always-on;
+		};
+
+		report@7 {
+			compatible = "apple,t6000-pmp-v2-report-entry";
+			reg = <0x7>;
+			label = "pmp-disp";
+			#power-domain-cells = <0>;
+			apple,always-on;
+		};
+
+		report@13 {
+			compatible = "apple,t6000-pmp-v2-report-entry";
+			reg = <0x13>;
+			label = "pmp-atc1";
+			#power-domain-cells = <0>;
+			apple,always-on;
+		};
+
+		report@14 {
+			compatible = "apple,t6000-pmp-v2-report-entry";
+			reg = <0x14>;
+			label = "pmp-atc2";
+			#power-domain-cells = <0>;
+			apple,always-on;
+		};
+
+		report@16 {
+			compatible = "apple,t6000-pmp-v2-report-entry";
+			reg = <0x16>;
+			label = "pmp-soc-ni0";
+			#power-domain-cells = <0>;
+			apple,always-on;
+		};
+
+		report@17 {
+			compatible = "apple,t6000-pmp-v2-report-entry";
+			reg = <0x17>;
+			label = "pmp-soc-ni1";
+			#power-domain-cells = <0>;
+			apple,always-on;
+		};
+
+		report@19 {
+			compatible = "apple,t6000-pmp-v2-report-entry";
+			reg = <0x19>;
+			label = "pmp-soc-ni3";
+			#power-domain-cells = <0>;
+			apple,always-on;
+		};
+
+		report@1a {
+			compatible = "apple,t6000-pmp-v2-report-entry";
+			reg = <0x1a>;
+			label = "pmp-soc-ni4";
+			#power-domain-cells = <0>;
+			apple,always-on;
+		};
+
+		report@1b {
+			compatible = "apple,t6000-pmp-v2-report-entry";
+			reg = <0x1b>;
+			label = "pmp-soc-ni5";
+			#power-domain-cells = <0>;
+			apple,always-on;
+		};
+
+		report@1d {
+			compatible = "apple,t6000-pmp-v2-report-entry";
+			reg = <0x1d>;
+			label = "pmp-ans";
+			#power-domain-cells = <0>;
+			apple,always-on;
+		};
+
+		report@1e {
+			compatible = "apple,t6000-pmp-v2-report-entry";
+			reg = <0x1e>;
+			label = "pmp-pcie";
+			#power-domain-cells = <0>;
+			apple,always-on;
+		};
+
+		report@22 {
+			compatible = "apple,t6000-pmp-v2-report-entry";
+			reg = <0x22>;
+			label = "pmp-sio";
+			#power-domain-cells = <0>;
+		};
+
+		report@18 {
+			compatible = "apple,t6000-pmp-v2-report-entry";
+			reg = <0x18>;
+			label = "pmp-boot-18";
+			#power-domain-cells = <0>;
+			apple,always-on;
+		};
+	};
+
+	pmp: pmp@380500000 {
+		compatible = "apple,t8132-pmp-v2";
+		reg = <0x3 0x80500000 0x0 0xc0000>,
+		      <0x3 0x80e00000 0x0 0x4000>;
+		reg-names = "pmp", "asc";
+		mboxes = <&pmp_mbox>;
+		mbox-names = "mbox";
+		iommus = <&pmp_dart 0>;
+		power-domains = <&ps_pmp>;
+	};
+
+	pmp_mbox: mailbox@380e08000 {
+		compatible = "apple,t8103-asc-mailbox", "apple,asc-mailbox-v4";
+		reg = <0x3 0x80e08000 0x0 0x4000>;
+		interrupt-parent = <&aic>;
+		/* Binding order, empty before not-empty (the ADT lists each pair
+		 * the other way round). */
+		interrupts = <AIC_IRQ 877 IRQ_TYPE_LEVEL_HIGH>,
+		             <AIC_IRQ 878 IRQ_TYPE_LEVEL_HIGH>,
+		             <AIC_IRQ 879 IRQ_TYPE_LEVEL_HIGH>,
+		             <AIC_IRQ 880 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "send-empty", "send-not-empty",
+		                  "recv-empty", "recv-not-empty";
+		#mbox-cells = <0>;
+		power-domains = <&ps_pmp>, <&ps_pms_sram>;
+	};
+};
