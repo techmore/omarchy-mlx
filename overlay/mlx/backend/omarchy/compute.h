@@ -1080,6 +1080,11 @@ enum class ComputeKernel : uint16_t {
   FastRopeHalfSplitF16,
   FastRopeFreqsHalfSplitF16,
   FastRopeFreqsHalfSplitBF16,
+  // bf16 builds of the scalar-FMA Q4 prefill pair (shaders/qmm_fma.comp
+  // -DUSE_BF16=1) for drivers without the fp32 cooperative matrix.
+  // Appended to keep profile kernel ids stable.
+  QmmPrefillFmaBF16,
+  QmmPrefillFmaPreciseBF16,
   Count,
 };
 
