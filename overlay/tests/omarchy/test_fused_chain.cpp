@@ -16,14 +16,18 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <iostream>
 #include <limits>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "mlx/backend/gpu/device_info.h"
 #include "mlx/backend/omarchy/allocator.h"
 #include "mlx/backend/omarchy/compute.h"
+#include "mlx/backend/omarchy/device.h"
 #include "mlx/backend/omarchy/encoder.h"
+#include "mlx/backend/omarchy/fused_chain.h"
 #include "mlx/backend/omarchy/trace.h"
 #include "mlx/compile.h"
 #include "mlx/ops.h"
@@ -1501,6 +1505,9 @@ TEST_CASE("eager q4 decode gemv swiglu epilogue env gate off keeps the chain") {
     return std::vector<array>{
         g, u, multiply(multiply(g, sigmoid(g, stream), stream), u, stream)};
   };
+  // The gate under test sits inside the fused GEMV route; pin that route
+  // on, since its unset default is off on some parts.
+  setenv("MLX_OMARCHY_FUSED_GEMV", "1", 1);
   setenv("MLX_OMARCHY_FUSED_GEMV_SWIGLU", "0", 1);
   auto candidate = forward();
   uint64_t before = counters().vk_compute_dispatches.load();
@@ -1859,4 +1866,51 @@ TEST_CASE("token-multi q4 gemv kill switch restores the single-row fence") {
   expect_bit_exact(composed[0], switched[0], stream);
   unsetenv("MLX_OMARCHY_QMM_VEC_TOKEN_MULTI");
   unsetenv("MLX_OMARCHY_FUSED_GEMV");
+}
+
+TEST_CASE("fused decode default: the part rule") {
+  CHECK(omarchy::fused_decode_off_default_part("Apple M4 (G16G B1)"));
+  CHECK_FALSE(omarchy::fused_decode_off_default_part("Apple M1 (G13G B1)"));
+  CHECK_FALSE(omarchy::fused_decode_off_default_part("Apple M1 Max (G13C C0)"));
+  CHECK_FALSE(omarchy::fused_decode_off_default_part("Apple M2 Max (G14C B1)"));
+  CHECK_FALSE(omarchy::fused_decode_off_default_part(""));
+}
+
+// The same rule through the live gates: with MLX_OMARCHY_FUSED_GEMV and
+// MLX_OMARCHY_FUSED_TRIO unset, both routes follow the part rule for the
+// device this process opened; an explicit 1 or 0 wins on every part.
+TEST_CASE("fused decode default: unset follows the part rule, a setting wins") {
+  if (!compute_available()) {
+    return;
+  }
+  const std::string& name = omarchy::device(0).capabilities().device_name;
+  const bool part_off = omarchy::fused_decode_off_default_part(name);
+  std::cout << "[provenance] device=" << name
+            << " fused_decode_off_default=" << (part_off ? 1 : 0) << "\n";
+  const char* names[] = {
+      "MLX_OMARCHY_FUSED_CHAIN", "MLX_OMARCHY_FUSED_GEMV",
+      "MLX_OMARCHY_FUSED_TRIO"};
+  std::vector<std::optional<std::string>> saved;
+  for (const char* var : names) {
+    const char* v = std::getenv(var);
+    saved.push_back(v ? std::optional<std::string>(v) : std::nullopt);
+    unsetenv(var);
+  }
+  CHECK_EQ(omarchy::fused_gemv_enabled(), !part_off);
+  CHECK_EQ(omarchy::fused_trio_enabled(), !part_off);
+  setenv("MLX_OMARCHY_FUSED_GEMV", "1", 1);
+  setenv("MLX_OMARCHY_FUSED_TRIO", "1", 1);
+  CHECK(omarchy::fused_gemv_enabled());
+  CHECK(omarchy::fused_trio_enabled());
+  setenv("MLX_OMARCHY_FUSED_GEMV", "0", 1);
+  setenv("MLX_OMARCHY_FUSED_TRIO", "0", 1);
+  CHECK_FALSE(omarchy::fused_gemv_enabled());
+  CHECK_FALSE(omarchy::fused_trio_enabled());
+  for (size_t i = 0; i < saved.size(); ++i) {
+    if (saved[i]) {
+      setenv(names[i], saved[i]->c_str(), 1);
+    } else {
+      unsetenv(names[i]);
+    }
+  }
 }

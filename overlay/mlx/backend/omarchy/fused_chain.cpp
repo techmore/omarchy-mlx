@@ -1885,10 +1885,19 @@ bool outgate_fold_enabled() {
   return !legacy_g13;
 }
 
+// Default of the fused decode GEMV and trio routes when their variables
+// are unset: on, except on the parts of omarchy::fused_decode_off_default_part.
+static bool fused_decode_default() {
+  static const bool off =
+      fused_decode_off_default_part(device().capabilities().device_name);
+  return !off;
+}
+
 bool fused_gemv_enabled() {
   return fused_chain_enabled() &&
-      (std::getenv("MLX_OMARCHY_FUSED_GEMV") == nullptr ||
-       env_flag("MLX_OMARCHY_FUSED_GEMV"));
+      (std::getenv("MLX_OMARCHY_FUSED_GEMV") == nullptr
+           ? fused_decode_default()
+           : env_flag("MLX_OMARCHY_FUSED_GEMV"));
 }
 
 // MLX_OMARCHY_FUSED_GEMV_SWIGLU=0 keeps the SwiGLU store epilogue off
@@ -1910,8 +1919,9 @@ bool gemv_token_multi_enabled() {
 
 bool fused_trio_enabled() {
   return fused_chain_enabled() &&
-      (std::getenv("MLX_OMARCHY_FUSED_TRIO") == nullptr ||
-       env_flag("MLX_OMARCHY_FUSED_TRIO"));
+      (std::getenv("MLX_OMARCHY_FUSED_TRIO") == nullptr
+           ? fused_decode_default()
+           : env_flag("MLX_OMARCHY_FUSED_TRIO"));
 }
 
 bool kv_direct_enabled() {
