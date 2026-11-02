@@ -1,0 +1,43 @@
+kernel 7.1.13-1-20-ARCH
+params: hw_set0= hw_set1= hw_set2= hw_set3= 
+[    7.000834] asahi_m4: asahi_m4: hardware data +0xf04 = 0x1f (hw_set)
+[    7.000836] asahi_m4: asahi_m4: hardware data +0xf34 = 0x1 (hw_set)
+[    7.000836] asahi_m4: asahi_m4: hardware data +0xf38 = 0x1 (hw_set)
+[    7.000837] asahi_m4: asahi_m4: hardware data +0xf4c = 0x31 (hw_set)
+live +0xf30..+0xf4c: ERROR: (most "/home/sdolbec/gpu/fwdump/fwpeek.py", +  "/home/sdolbec/gpu/fwdump/fwpeek.py", q(translate(va))  "/home/sdolbec/gpu/fwdump/fwpeek.py", = "/home/sdolbec/gpu/fwdump/fwpeek.py", struct.unpack_from("<Q",  "/home/sdolbec/gpu/fwdump/fwpeek.py", =  "/home/sdolbec/gpu/fwdump/fwpeek.py", KO,  "/usr/lib/python3.14/subprocess.py", CalledProcessError(retcode, stderr=stderr) Command 
+== PMP off
+perf-state idle: 0x00000003
+gpu: type=1 flags=DVC- vec=4 groups=1280 threads=327680 MiB=1024    13.13 ms    81.8 GB/s
+gpu: type=1 flags=DVC- vec=4 groups=1280 threads=327680 MiB=1024    13.11 ms    81.9 GB/s
+== starting PMP
+[   72.663447] apple_pmp 380500000.pmp: PMP descriptor 2 wire_index=0x1 "pmc-voter-ceil-override-mask": size=0x4
+[   73.252915] apple_pmp 380500000.pmp: RTKit: syslog message: io.cpp:54: PMP started
+[   73.258414] apple-pmp-report 3803c0000.pmp-report: PMP AGX vote: send 0, acknowledged after 1 ms
+[   73.261415] apple-pmp-report 3803c0000.pmp-report: PMP DISP vote: send 0, acknowledged after 1 ms
+perf-state idle with PMP: 0x00000001
+cpu threads=10 read   83.6 GB/s
+== GPU job with PMP
+t1 perf-state: 0x00000001
+t2 perf-state: 0x00000001
+t3 perf-state: 0x00000001
+t4 perf-state: 0x00000001
+t5 perf-state: 0x00000001
+t6 perf-state: 0x00000001
+gpu: DRM_IOCTL_ASAHI_SUBMIT failed: Input/output error
+gpu again: FAIL vkEnumeratePhysicalDevices(inst, &n, &pd) = -3
+perf-state after: 0x00000001
+[   76.577603] asahi_m4 302600000.gpu: G16: failed Event kind=4 cursor=88 flights=1
+[   76.577607] asahi_m4 302600000.gpu: G16: Event +0x0=0x0000000000000004
+[   76.577608] asahi_m4 302600000.gpu: G16: Event +0x8=0xffffffff00000000
+[   76.577609] asahi_m4 302600000.gpu: G16: Event +0x10=0x0000000000000000
+[   76.577611] asahi_m4 302600000.gpu: G16: Event +0x18=0x0000000000000000
+[   76.577611] asahi_m4 302600000.gpu: G16: Event +0x20=0x0000000000000000
+[   76.577612] asahi_m4 302600000.gpu: G16: Event +0x28=0x0000000000000000
+[   76.577613] asahi_m4 302600000.gpu: G16: Event +0x30=0x0000000000000000
+[   76.577614] asahi_m4 302600000.gpu: G16: Event +0x38=0x0000000000000000
+[   76.577615] asahi_m4 302600000.gpu: G16: Event +0x40=0x0000000000000000
+[   76.577616] asahi_m4 302600000.gpu: G16: pending Work=0xfffffc220024c000 context=1 age_ms=13 render=false
+[   76.577618] asahi_m4 302600000.gpu: G16: stage=0 event=34 stamp=0xfffffc220030d040 actual=0x0 expected=0x100 pointers=0xfffffc220030c000 read=0 done=1 target=1
+[   76.577619] asahi_m4 302600000.gpu: G16: firmware event service failed: EIO
+[   76.577620] asahi_m4: G16: firmware retirement failed: EIO
+[   76.577621] asahi_m4: G16: submission pipeline failed: EIO, 1 jobs, 1 issued
